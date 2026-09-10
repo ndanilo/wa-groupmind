@@ -1,14 +1,17 @@
-import { TavilyCrawl, TavilyExtract, TavilyMap, TavilySearch } from '@langchain/tavily'
+import { TavilyExtract, TavilySearch } from '@langchain/tavily'
 
 import { getTavilyConfig } from '../config.js'
 
 /*
-Tavily's four web tools, wrapped as factories so nothing hits the network at import
-time and tests can build them on demand.
+Tavily's web tools, wrapped as factories so nothing hits the network at import time
+and tests can build them on demand.
 
 The `description` of each tool is the only thing the model reads when deciding what to
-call, so these are written to spell out the intended chain: search to find URLs,
-extract to read them, crawl/map only when a whole site is in play.
+call, so these are written to spell out the intended chain: search to find URLs, then
+extract to read them.
+
+Tavily also offers crawl and map. They are not wired up: a whole-site crawl is slow and
+expensive, and no question this bot answers has needed one.
 */
 
 /** Ranked web results with snippets. The agent's entry point for anything time-sensitive. */
@@ -52,30 +55,3 @@ export function createWebExtractTool(): TavilyExtract {
   })
 }
 
-/** Follows links from a starting URL. For "read the docs for X" style questions. */
-export function createWebCrawlTool(): TavilyCrawl {
-  const TavilyConfig = getTavilyConfig()
-  return new TavilyCrawl({
-    tavilyApiKey: TavilyConfig.apiKey,
-    extractDepth: TavilyConfig.extractDepth,
-    format: TavilyConfig.format,
-    maxDepth: TavilyConfig.maxDepth,
-    limit: TavilyConfig.crawlLimit,
-    name: 'web_crawl',
-    description:
-      'Crawl a website starting from one URL, following links and returning the content of each page. Expensive and slow: only use when the answer is spread across several pages of one site, such as a documentation set. Prefer web_search plus web_extract for single facts.',
-  })
-}
-
-/** URL inventory for a site, without downloading page content. */
-export function createWebMapTool(): TavilyMap {
-  const TavilyConfig = getTavilyConfig()
-  return new TavilyMap({
-    tavilyApiKey: TavilyConfig.apiKey,
-    maxDepth: TavilyConfig.maxDepth,
-    limit: TavilyConfig.crawlLimit,
-    name: 'web_map',
-    description:
-      'List the URLs of a website without downloading their content. Use to discover the structure of a site before choosing which pages to read with web_extract.',
-  })
-}

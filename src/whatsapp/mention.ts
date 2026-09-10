@@ -55,7 +55,7 @@ export function textOf(msg: WAMessage): string | undefined {
  * Collects mentionedJid lists from every content variant that can carry them.
  * Mentions in image captions still count.
  */
-export function mentionedJids(msg: WAMessage): string[] {
+function mentionedJids(msg: WAMessage): string[] {
   const content = msg.message
   if (!content) return []
 
@@ -104,7 +104,7 @@ export function parseQuestion(text: string, maxLength: number): string {
  * Resolves the group participant who sent the message.
  * Prefer the primary participant JID; fall back to participantAlt under LID addressing.
  */
-export function requesterOf(msg: WAMessage): string | undefined {
+function requesterOf(msg: WAMessage): string | undefined {
   const key = msg.key
   return key.participant ?? key.participantAlt ?? undefined
 }

@@ -36,7 +36,7 @@ const MAX_SLUG_LENGTH = 60
  * Decomposes first so Portuguese accents survive as their base letters: "inflação" becomes
  * "inflacao" rather than "infla-o".
  */
-export function slugify(value: string): string {
+function slugify(value: string): string {
   const slug = value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -50,7 +50,7 @@ export function slugify(value: string): string {
 }
 
 /** Colons are legal in an ISO timestamp and illegal in a Windows filename. */
-export function timestampFor(date: Date): string {
+function timestampFor(date: Date): string {
   return date.toISOString().replace(/[:.]/g, '-').slice(0, 19)
 }
 
@@ -61,7 +61,7 @@ function extensionFor(mediaType: string): string {
 }
 
 /** Resolves the configured output directory against the project root. */
-export function outputDirectory(): string {
+function outputDirectory(): string {
   const OutputConfig = getOutputConfig()
   return isAbsolute(OutputConfig.directory)
     ? OutputConfig.directory

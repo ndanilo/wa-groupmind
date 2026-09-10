@@ -12,6 +12,28 @@ import {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/**
+ * Drains everything already scheduled, without putting a clock on it.
+ *
+ * Ordering assertions must not race a `setTimeout`: on a loaded machine the timer
+ * overruns, the job under test finishes early, and the assertion reads the wrong
+ * state. Yielding a few times is deterministic.
+ */
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 5; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+}
+
+/** A job body that occupies its worker until the test explicitly releases it. */
+const gate = () => {
+  let release = (): void => {}
+  const held = new Promise<void>((resolve) => {
+    release = () => resolve()
+  })
+  return { held, release }
+}
+
 describe('TaskQueue', () => {
   it('respects concurrency', async () => {
     const queue = new TaskQueue({ concurrency: 2, maxQueued: 10 })
@@ -34,13 +56,14 @@ describe('TaskQueue', () => {
     const queue = new TaskQueue({ concurrency: 1, maxQueued: 10 })
     const order: number[] = []
 
+    const blocker = gate()
     const first = queue.run(async () => {
       order.push(1)
-      await delay(30)
+      await blocker.held
     })
 
     // Let the first job claim the only worker before enqueueing the rest.
-    await delay(5)
+    await settle()
 
     const second = queue.run(async () => {
       order.push(2)
@@ -49,6 +72,7 @@ describe('TaskQueue', () => {
       order.push(3)
     })
 
+    blocker.release()
     await Promise.all([first, second, third])
     assert.deepEqual(order, [1, 2, 3])
   })
@@ -56,11 +80,18 @@ describe('TaskQueue', () => {
   it('rejects when the waiting list is full', async () => {
     const queue = new TaskQueue({ concurrency: 1, maxQueued: 1 })
 
-    const blocker = queue.run(async () => delay(80))
-    await delay(5)
-    const waiting = queue.run(async () => delay(10))
+    const running = gate()
+    const queued = gate()
+
+    const blocker = queue.run(async () => running.held)
+    await settle()
+    const waiting = queue.run(async () => queued.held)
+    await settle()
 
     await assert.rejects(() => queue.run(async () => undefined), QueueFullError)
+
+    running.release()
+    queued.release()
     await Promise.all([blocker, waiting])
   })
 
@@ -84,9 +115,13 @@ describe('AdmissionControl', () => {
       jobTimeoutMs: 5_000,
     })
 
-    const first = admission.admit('user-a', async () => delay(60))
-    await delay(5)
+    const job = gate()
+    const first = admission.admit('user-a', async () => job.held)
+    await settle()
+
     await assert.rejects(() => admission.admit('user-a', async () => undefined), UserInFlightError)
+
+    job.release()
     await first
   })
 
@@ -142,11 +177,19 @@ describe('AdmissionControl', () => {
     })
 
     const events: string[] = []
+
+    // Held open explicitly rather than for a fixed duration, so the only worker
+    // stays occupied no matter how the scheduler behaves.
+    let releaseBlocker = (): void => {}
+    const held = new Promise<void>((resolve) => {
+      releaseBlocker = () => resolve()
+    })
+
     const blocker = admission.admit('blocker', async () => {
       events.push('blocker-run')
-      await delay(50)
+      await held
     })
-    await delay(5)
+    await settle()
 
     const second = admission.admit(
       'user-a',
@@ -159,10 +202,11 @@ describe('AdmissionControl', () => {
       },
     )
 
-    await delay(10)
-    assert.ok(events.includes('user-ack'))
-    assert.ok(!events.includes('user-run'))
+    await settle()
+    assert.ok(events.includes('user-ack'), 'acked as soon as it was admitted')
+    assert.ok(!events.includes('user-run'), 'did not start while the only worker was busy')
 
+    releaseBlocker()
     await Promise.all([blocker, second])
     assert.deepEqual(events, ['blocker-run', 'user-ack', 'user-run'])
   })

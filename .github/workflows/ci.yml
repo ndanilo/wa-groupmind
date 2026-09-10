@@ -45,3 +45,8 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # Catches a broken image path, and a README translated in one language but not
+      # the others. Offline and deterministic.
+      - name: Check documentation assets
+        run: node scripts/check-doc-assets.mjs

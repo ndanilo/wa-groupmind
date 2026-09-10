@@ -301,7 +301,7 @@ export type ChatModelOptions = {
 }
 
 /** The OpenRouter-backed chat model this project talks to. */
-export function createChatModel(
+function createChatModel(
   temperature: number,
   options: ChatModelOptions = {},
 ): BaseChatModel {
@@ -329,7 +329,7 @@ export function createChatModel(
  *
  * The agent is stateless config, so one instance is safe to share across concurrent jobs.
  */
-export function createResearchAgent(
+function createResearchAgent(
   model: BaseChatModel = createChatModel(getChatConfig().researchTemperature),
   tools: AgentTool[] = createResearchTools(),
 ) {

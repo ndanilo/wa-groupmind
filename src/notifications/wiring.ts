@@ -34,7 +34,7 @@ export type NotificationService = {
 }
 
 /** Maps the app's flat env config onto the narrow shape the gateway actually needs. */
-export function notificationServerConfig(): NotificationServerConfig {
+function notificationServerConfig(): NotificationServerConfig {
   return {
     apiKey: requireNotifyApiKey(),
     maxFileBytes: config.notifyMaxFileBytes,

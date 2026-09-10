@@ -1,32 +1,74 @@
-# Brand assets
+# Brand and documentation assets
 
-Images referenced by the three READMEs. Drop generated files here using **exactly** these
-names — the READMEs link to them by path.
+Images referenced by the three READMEs. Filenames are load-bearing — the READMEs link to them
+by relative path, so renaming one breaks all three.
 
-| File | Size | Used by |
-| --- | --- | --- |
-| `logo.png` | 512x512, transparent background | Header of all three READMEs (rendered at 140px) |
-| `hero.png` | 1600x500 | Banner under the title in all three READMEs |
-| `social-preview.png` | 1280x640 | GitHub link previews. Upload under **Settings -> General -> Social preview**; it is not referenced from markdown |
+## Inventory
 
-## Design constraints
+Every file here is in use. Nothing is kept "just in case" — an unreferenced image is dead weight
+in a clone, so it gets deleted rather than parked.
 
-These are not stylistic preferences. They keep the project on the safe side of trademark law.
+| File | Format | Size | Used by |
+| --- | --- | --- | --- |
+| `logo.png` | PNG, transparent | 512x512 | Header of all three READMEs, rendered at 140px |
+| `hero.jpg` | JPEG | 1600x893 | Banner under the title in all three READMEs |
+| `demo-answer.jpg` | JPEG | 1200x896 | "What it does" — the core ask-and-answer loop |
+| `demo-infographic.jpg` | JPEG | 1200x896 | "Answer format" — a poster arriving in a thread |
+| `demo-poster.jpg` | JPEG | 760x1362 | "Answer format" — a generated poster on its own |
+| `demo-pairing.jpg` | JPEG | 1200x670 | "Linking the account" — the pairing code |
+| `demo-webhook.jpg` | JPEG | 1200x670 | "Notification webhook" — curl in, message out |
+| `social-preview.jpg` | JPEG | 1280x640 | GitHub link previews. Uploaded under Settings -> General -> Social preview, so it is the one file no markdown references |
 
-- **No green.** WhatsApp's brand green (`#25D366`) and its family are off limits, as is the
-  overall green-and-white palette.
-- **No phone handsets, speech bubbles or chat-bubble shapes.** Together with green, these read
-  as WhatsApp trade dress even without the wordmark.
+There is deliberately no wordmark lockup. The `# wa-groupmind` heading already renders the name
+in whatever colour the reader's theme calls for, which an image cannot do.
+
+## Rules for new or replacement assets
+
+These are not stylistic preferences. They keep the project on the safe side of trademark law,
+and they are the reason the mockups can be published at all. See [DISCLAIMER.md](../../DISCLAIMER.md).
+
+- **No green.** WhatsApp's brand green (`#25D366`) and the whole green-and-white family are out,
+  as are teal and mint.
+- **No chat-bubble shapes.** Message containers are squared rounded rectangles with a leading
+  accent bar. No pointed tails, no teardrop corners.
+- **No read receipts.** No single check, no double check, no "seen" markers.
+- **No app chrome.** No title bar, call icons, search field, OS status bar or input box.
+- **Square avatars**, never circles, never photographs of people.
 - **No WhatsApp or Meta logo, wordmark, glyph or icon**, altered or otherwise.
-- **Nothing implying endorsement** — no "official", no partner badges, no Meta-adjacent visual
-  language.
+- **Nothing implying endorsement** — no "official", no partner badges.
 
 Using the word "WhatsApp" in prose to describe interoperability is nominative fair use and is
-fine. Looking like WhatsApp is not. See [DISCLAIMER.md](../../DISCLAIMER.md).
+fine. Looking like WhatsApp is not.
 
 ## Palette
 
-Deep indigo `#1E1B4B`, electric violet `#7C3AED`, cyan accent `#22D3EE`, warm amber `#F59E0B`
-for highlights, near-black `#0B1020` background, off-white `#F8FAFC` text.
+| Role | Hex |
+| --- | --- |
+| Background | `#0B1020` |
+| Surface | `#1E1B4B` |
+| Incoming surface | `#16162E` |
+| Primary accent | `#7C3AED` |
+| Secondary accent | `#22D3EE` |
+| Highlight, used sparingly | `#F59E0B` |
+| Text | `#F8FAFC` |
+| Muted text | `#64648B` |
 
-Deliberately nothing like WhatsApp's palette.
+The five `demo-*` mockups are locked to this palette. Changing it means regenerating all of them.
+
+## Regenerating
+
+Product mockups are AI-generated from prompts that quote every visible string verbatim, the same
+technique `renderImagePrompt` in [src/ai/infographic/prompt.ts](../../src/ai/infographic/prompt.ts)
+uses on real posters. If you change a user-facing string in `MESSAGES`
+([src/whatsapp/reply.ts](../../src/whatsapp/reply.ts)) or alter the answer format, the mockups go
+stale and need regenerating.
+
+Raw generator output is oversized and often JPEG regardless of the extension you save it under.
+Run the optimiser to normalise formats, knock the flat background out of the logo files and
+re-encode everything at web sizes:
+
+```bash
+node scripts/optimise-assets.mjs
+```
+
+It is idempotent, so anything already in its target format and size is skipped.

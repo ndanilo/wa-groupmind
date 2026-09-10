@@ -14,7 +14,7 @@
 
 **Leia em outros idiomas:** [English](README.md) | **Português (Brasil)** | [Español](README.es.md)
 
-<img src="docs/assets/hero.png" alt="Pergunta entra, resposta pesquisada ou infográfico sai" width="100%">
+<img src="docs/assets/hero.jpg" alt="Várias perguntas de um grupo convergindo em uma única resposta com fontes" width="100%">
 
 </div>
 
@@ -55,6 +55,8 @@ URLs em que ela se baseou.
 @groupmind explica a alta do dólar                 -> explicação em texto corrido
 @groupmind faz um infográfico da taxa de juros     -> pôster gerado
 ```
+
+<img src="docs/assets/demo-answer.jpg" alt="Um integrante do grupo marca o bot, chega a confirmação e depois a resposta em tópicos com fontes" width="100%">
 
 ## Stack
 
@@ -99,6 +101,8 @@ obrigatório nesse modo e o app se recusa a iniciar sem ele.
 `PHONE_NUMBER`, mas QR codes no terminal frequentemente não são escaneáveis dependendo da sua
 fonte e do esquema de cores, e é por isso que não são o padrão.
 
+<img src="docs/assets/demo-pairing.jpg" alt="Saída do terminal mostrando os logs de inicialização e o código de pareamento de oito caracteres" width="100%">
+
 As credenciais ficam em `.auth/` depois do vínculo, então as execuções seguintes reconectam sem
 parear de novo.
 
@@ -124,6 +128,35 @@ ignoradas.
    `*título*` + subtítulo (mais a lista numerada em rankings).
 6. Em qualquer falha, nada é enviado além de um erro amigável, citado e marcando quem perguntou.
    Stack traces ficam no log.
+
+```mermaid
+sequenceDiagram
+    participant Member as Integrante do grupo
+    participant Handler as detector de menção
+    participant Queue as pool de workers
+    participant Assistant as assistente LangGraph
+    participant Tavily
+    participant Router as OpenRouter
+
+    Member->>Handler: marca o bot com uma pergunta
+    Handler->>Handler: remove o token, checa idade, grupo e allowlist
+    Handler->>Queue: admite o job
+    Handler-->>Member: confirmação citada, indicador de digitação ligado
+    Queue->>Assistant: executa
+    Assistant->>Router: classifica modo e needsResearch
+    Assistant->>Tavily: busca e extrai as melhores páginas
+    Tavily-->>Assistant: notas e URLs das fontes
+    Assistant->>Router: escreve a resposta, ou um briefing de pôster
+    opt modo imagem
+        Assistant->>Router: gera o pôster
+    end
+    Assistant-->>Queue: resposta em texto, ou imagem com legenda
+    Queue-->>Handler: resultado
+    Handler-->>Member: resposta citada marcando quem perguntou
+```
+
+Tudo antes de "admite o job" é gratuito. Cada seta para o Tavily ou o OpenRouter custa dinheiro,
+e é por isso que as travas de admissão abaixo importam.
 
 ### O grafo
 
@@ -194,6 +227,17 @@ exatamente o paredão de texto que esse formato existe para evitar. Um regex é 
 testado, e enviesado para o lado certo — o custo de perder um "vai mais fundo" vago é o leitor
 reformular com "explica".
 
+Quando a pergunta pede uma imagem, a resposta é um pôster cuja legenda carrega o título, o
+subtítulo e — em rankings — a lista numerada, de modo que a conversa continua útil mesmo se a
+imagem ficar difícil de ler em uma tela pequena.
+
+<table>
+<tr>
+<td width="58%"><img src="docs/assets/demo-infographic.jpg" alt="Um pedido de pôster no grupo e o infográfico gerado chegando com sua legenda"></td>
+<td width="42%"><img src="docs/assets/demo-poster.jpg" alt="Um pôster infográfico em retrato com três painéis de números e uma conclusão no rodapé"></td>
+</tr>
+</table>
+
 ### Inspecionando uma execução
 
 ```bash
@@ -229,6 +273,30 @@ mensagem específica em vez de iniciar outra execução paga.
 
 ### Travas de segurança
 
+Toda mensagem passa por este funil antes que qualquer coisa cobrável aconteça. Só o último ramo
+gasta dinheiro.
+
+```mermaid
+flowchart TD
+    msg[messages.upsert] --> grp{"É de um grupo?"}
+    grp -->|não| drop([descartada, não custa nada])
+    grp -->|sim| live{"Mensagem ao vivo, não backlog de reconexão?"}
+    live -->|não| drop
+    live -->|sim| own{"De outra pessoa, não do próprio bot?"}
+    own -->|não| drop
+    own -->|sim| age{"Mais nova que REQUEST_MAX_AGE_SECONDS?"}
+    age -->|não| drop
+    age -->|sim| allow{"Grupo passa em ALLOWED_GROUP_JIDS?"}
+    allow -->|não| drop
+    allow -->|sim| ment{"Realmente marca o bot?"}
+    ment -->|não| drop
+    ment -->|sim| cool{"Passou USER_COOLDOWN_MS, nada rodando para essa pessoa?"}
+    cool -->|não| busy[resposta citada pedindo para aguardar]
+    cool -->|sim| slot{"Fila abaixo de INFOGRAPHIC_MAX_QUEUED?"}
+    slot -->|não| busy
+    slot -->|sim| run([executa o assistente, o único caminho que gasta dinheiro])
+```
+
 - Somente grupos; status e canais são ignorados.
 - Somente mensagens ao vivo (`notify`); backlogs de reconexão (`append`) são ignorados.
 - Mensagens mais antigas que `REQUEST_MAX_AGE_SECONDS` são ignoradas.
@@ -255,6 +323,8 @@ curl -X POST http://127.0.0.1:3001/notifications \
 ```json
 { "id": "7d27fa53-f6fb-4d87-bb97-70a028bc0593", "status": "queued" }
 ```
+
+<img src="docs/assets/demo-webhook.jpg" alt="Uma requisição curl à esquerda e a mensagem entregue com seu anexo à direita" width="100%">
 
 `202` significa enfileirado, não entregue — um envio leva segundos e pode cair no meio de uma
 reconexão, então quem chamou é liberado imediatamente e `GET /notifications/:id` reporta como

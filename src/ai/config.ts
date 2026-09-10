@@ -32,8 +32,6 @@ export type TavilyConfigType = {
   searchDepth: 'basic' | 'advanced'
   extractDepth: 'basic' | 'advanced'
   format: 'markdown' | 'text'
-  maxDepth: number
-  crawlLimit: number
   /** Full lowercase country name Tavily boosts results from, e.g. "brazil". */
   country?: string
 }
@@ -109,8 +107,6 @@ export function getTavilyConfig(): TavilyConfigType {
     searchDepth: 'basic',
     extractDepth: 'basic',
     format: 'markdown',
-    maxDepth: 2,
-    crawlLimit: 20,
     country: searchCountry(config.outputLanguage),
   }
   return tavily

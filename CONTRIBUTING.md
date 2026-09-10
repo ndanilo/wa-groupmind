@@ -30,15 +30,21 @@ You do not need a linked WhatsApp account or any API key to run the test suite.
 
 ## Before you open a pull request
 
-All three must pass:
+All of these must pass:
 
 ```bash
 npm run typecheck
 npm test
 npm run build
+node scripts/check-doc-assets.mjs
 ```
 
 CI runs exactly these on Node 22 and 24, so a green local run is a green CI run.
+
+The last one verifies that every image the docs reference exists and that the three READMEs
+use the same number of them — it is what fails when a translation gets left behind. If you
+touched a mermaid diagram, `node scripts/check-mermaid.mjs` renders each one to confirm it
+still parses; it is not in CI because it calls an external service.
 
 ## Never commit real data
 

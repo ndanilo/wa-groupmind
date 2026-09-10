@@ -14,7 +14,7 @@
 
 **Léelo en otros idiomas:** [English](README.md) | [Português (Brasil)](README.pt-BR.md) | **Español**
 
-<img src="docs/assets/hero.png" alt="Entra una pregunta, sale una respuesta investigada o una infografía" width="100%">
+<img src="docs/assets/hero.jpg" alt="Varias preguntas de un grupo convergiendo en una sola respuesta con fuentes" width="100%">
 
 </div>
 
@@ -56,6 +56,8 @@ las URLs en las que se basó.
 @groupmind explica la subida del dólar              -> explicación en prosa
 @groupmind haz una infografía de la tasa de interés -> póster generado
 ```
+
+<img src="docs/assets/demo-answer.jpg" alt="Un miembro del grupo menciona al bot, llega la confirmación y después la respuesta en temas con fuentes" width="100%">
 
 ## Stack
 
@@ -99,6 +101,8 @@ obligatorio en este modo y la app se niega a arrancar sin él.
 pero los códigos QR en la terminal a menudo no se pueden escanear según tu fuente y esquema de
 colores, y por eso no son el predeterminado.
 
+<img src="docs/assets/demo-pairing.jpg" alt="Salida de la terminal mostrando los registros de arranque y el código de vinculación de ocho caracteres" width="100%">
+
 Las credenciales quedan en `.auth/` una vez vinculado, así que las ejecuciones posteriores
 reconectan sin volver a emparejar.
 
@@ -125,6 +129,35 @@ se ignoran.
    `*título*` + subtítulo (más la lista numerada en los rankings).
 6. Ante cualquier fallo, no se envía nada salvo un error amable, citado y etiquetando a quien
    preguntó. Los stack traces se quedan en el registro.
+
+```mermaid
+sequenceDiagram
+    participant Member as Miembro del grupo
+    participant Handler as detector de menciones
+    participant Queue as pool de workers
+    participant Assistant as asistente LangGraph
+    participant Tavily
+    participant Router as OpenRouter
+
+    Member->>Handler: menciona al bot con una pregunta
+    Handler->>Handler: quita el token, comprueba antigüedad, grupo y lista de permitidos
+    Handler->>Queue: admite el trabajo
+    Handler-->>Member: confirmación citada, indicador de escritura activo
+    Queue->>Assistant: ejecuta
+    Assistant->>Router: clasifica modo y needsResearch
+    Assistant->>Tavily: busca y extrae las mejores páginas
+    Tavily-->>Assistant: notas y URLs de las fuentes
+    Assistant->>Router: escribe la respuesta, o un brief de póster
+    opt modo imagen
+        Assistant->>Router: genera el póster
+    end
+    Assistant-->>Queue: respuesta en texto, o imagen con pie
+    Queue-->>Handler: resultado
+    Handler-->>Member: respuesta citada etiquetando a quien preguntó
+```
+
+Todo lo anterior a "admite el trabajo" es gratuito. Cada flecha hacia Tavily u OpenRouter cuesta
+dinero, y por eso importan las barreras de admisión de más abajo.
 
 ### El grafo
 
@@ -199,6 +232,17 @@ de prosa que este formato existe para evitar. Un regex es determinista, está pr
 sesgado hacia el lado correcto — el coste de perder un vago "profundiza" es que el lector
 reformule con "explica".
 
+Cuando la pregunta pide una imagen, la respuesta es un póster cuyo pie lleva el título, el
+subtítulo y — en los rankings — la lista numerada, de modo que el hilo sigue siendo útil aunque la
+imagen resulte difícil de leer en una pantalla pequeña.
+
+<table>
+<tr>
+<td width="58%"><img src="docs/assets/demo-infographic.jpg" alt="Una petición de póster en el grupo y la infografía generada llegando con su pie"></td>
+<td width="42%"><img src="docs/assets/demo-poster.jpg" alt="Un póster infográfico vertical con tres paneles de cifras y una conclusión al pie"></td>
+</tr>
+</table>
+
 ### Inspeccionar una ejecución
 
 ```bash
@@ -234,6 +278,30 @@ mensaje específico en lugar de iniciar otra ejecución de pago.
 
 ### Barreras de seguridad
 
+Cada mensaje atraviesa este embudo antes de que ocurra nada facturable. Solo la última rama
+gasta dinero.
+
+```mermaid
+flowchart TD
+    msg[messages.upsert] --> grp{"¿Viene de un grupo?"}
+    grp -->|no| drop([descartado, no cuesta nada])
+    grp -->|sí| live{"¿Mensaje en vivo, no backlog de reconexión?"}
+    live -->|no| drop
+    live -->|sí| own{"¿De otra persona, no del propio bot?"}
+    own -->|no| drop
+    own -->|sí| age{"¿Más reciente que REQUEST_MAX_AGE_SECONDS?"}
+    age -->|no| drop
+    age -->|sí| allow{"¿El grupo pasa ALLOWED_GROUP_JIDS?"}
+    allow -->|no| drop
+    allow -->|sí| ment{"¿Menciona realmente al bot?"}
+    ment -->|no| drop
+    ment -->|sí| cool{"¿Superado USER_COOLDOWN_MS y sin trabajo en curso?"}
+    cool -->|no| busy[respuesta citada pidiendo esperar]
+    cool -->|sí| slot{"¿Cola por debajo de INFOGRAPHIC_MAX_QUEUED?"}
+    slot -->|no| busy
+    slot -->|sí| run([ejecuta el asistente, la única vía que gasta dinero])
+```
+
 - Solo grupos; los estados y canales se omiten.
 - Solo mensajes en vivo (`notify`); los backlogs de reconexión (`append`) se ignoran.
 - Los mensajes más antiguos que `REQUEST_MAX_AGE_SECONDS` se ignoran.
@@ -261,6 +329,8 @@ curl -X POST http://127.0.0.1:3001/notifications \
 ```json
 { "id": "7d27fa53-f6fb-4d87-bb97-70a028bc0593", "status": "queued" }
 ```
+
+<img src="docs/assets/demo-webhook.jpg" alt="Una petición curl a la izquierda y el mensaje entregado con su adjunto a la derecha" width="100%">
 
 `202` significa encolado, no entregado — un envío tarda segundos y puede caer en mitad de una
 reconexión, así que quien llama queda liberado de inmediato y `GET /notifications/:id` informa de

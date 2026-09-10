@@ -14,7 +14,7 @@
 
 **Read this in other languages:** **English** | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md)
 
-<img src="docs/assets/hero.png" alt="Question in, researched answer or infographic out" width="100%">
+<img src="docs/assets/hero.jpg" alt="Several questions from a group converging into one sourced answer" width="100%">
 
 </div>
 
@@ -54,6 +54,8 @@ URLs it relied on.
 @groupmind explain why the dollar is rising        -> prose explanation
 @groupmind make an infographic about interest rates -> generated poster
 ```
+
+<img src="docs/assets/demo-answer.jpg" alt="A group member mentions the bot, an acknowledgement arrives, then a sourced topic-list answer" width="100%">
 
 ## Stack
 
@@ -96,6 +98,8 @@ in this mode and the app refuses to start without it.
 are frequently unscannable depending on your font and colour scheme, which is why they are not
 the default.
 
+<img src="docs/assets/demo-pairing.jpg" alt="Terminal output showing the startup logs and the eight-character pairing code" width="100%">
+
 Credentials land in `.auth/` once linked, so later runs reconnect without pairing again.
 
 ### Choosing a language
@@ -119,6 +123,35 @@ Only **group** messages that **@mention the bot** trigger a run. Direct chats ar
    `*title*` + subtitle (plus the numbered list for rankings).
 6. On any failure, nothing is sent except a friendly error, quoted and tagging the requester.
    Stack traces stay in the log.
+
+```mermaid
+sequenceDiagram
+    participant Member as Group member
+    participant Handler as mention handler
+    participant Queue as worker pool
+    participant Assistant as LangGraph assistant
+    participant Tavily
+    participant Router as OpenRouter
+
+    Member->>Handler: mentions the bot with a question
+    Handler->>Handler: strip the token, check age, group and allowlist
+    Handler->>Queue: admit the job
+    Handler-->>Member: quoted ack, typing indicator on
+    Queue->>Assistant: run
+    Assistant->>Router: classify mode and needsResearch
+    Assistant->>Tavily: search, then extract the best pages
+    Tavily-->>Assistant: notes and source URLs
+    Assistant->>Router: write the answer, or a poster brief
+    opt image mode
+        Assistant->>Router: generate the poster
+    end
+    Assistant-->>Queue: text answer, or image plus caption
+    Queue-->>Handler: result
+    Handler-->>Member: quoted reply tagging the requester
+```
+
+Everything before "admit the job" is free. Every arrow to Tavily or OpenRouter costs money, which
+is why the admission gates below matter.
 
 ### The graph
 
@@ -186,6 +219,17 @@ ordinary "what's the news today" *detailed* and produced exactly the wall of pro
 exists to avoid. A regex is deterministic, unit-tested, and biased the right way — the cost of
 missing a vague "go deeper" is that the reader rephrases with "explain".
 
+When the question asks for a picture, the reply is a poster whose caption carries the title,
+subtitle and — for rankings — the numbered list, so the thread stays useful even if the image is
+hard to read on a small screen.
+
+<table>
+<tr>
+<td width="58%"><img src="docs/assets/demo-infographic.jpg" alt="A poster request in the group, and the generated infographic arriving with its caption"></td>
+<td width="42%"><img src="docs/assets/demo-poster.jpg" alt="A generated portrait infographic poster with three figure panels and a closing takeaway"></td>
+</tr>
+</table>
+
 ### Inspecting a run
 
 ```bash
@@ -220,6 +264,30 @@ specific message instead of starting another paid run.
 
 ### Safety gates
 
+Every message runs this gauntlet before anything billable happens. Only the last branch spends
+money.
+
+```mermaid
+flowchart TD
+    msg[messages.upsert] --> grp{"In a group?"}
+    grp -->|no| drop([dropped, costs nothing])
+    grp -->|yes| live{"Live message, not a reconnect backlog?"}
+    live -->|no| drop
+    live -->|yes| own{"From someone other than the bot?"}
+    own -->|no| drop
+    own -->|yes| age{"Newer than REQUEST_MAX_AGE_SECONDS?"}
+    age -->|no| drop
+    age -->|yes| allow{"Group passes ALLOWED_GROUP_JIDS?"}
+    allow -->|no| drop
+    allow -->|yes| ment{"Actually mentions the bot?"}
+    ment -->|no| drop
+    ment -->|yes| cool{"Past USER_COOLDOWN_MS, nothing already running for them?"}
+    cool -->|no| busy[quoted reply asking them to wait]
+    cool -->|yes| slot{"Queue below INFOGRAPHIC_MAX_QUEUED?"}
+    slot -->|no| busy
+    slot -->|yes| run([run the assistant, the only path that spends money])
+```
+
 - Groups only; status broadcasts and channels are skipped.
 - Live messages only (`notify`); reconnect backlogs (`append`) are ignored.
 - Messages older than `REQUEST_MAX_AGE_SECONDS` are ignored.
@@ -246,6 +314,8 @@ curl -X POST http://127.0.0.1:3001/notifications \
 ```json
 { "id": "7d27fa53-f6fb-4d87-bb97-70a028bc0593", "status": "queued" }
 ```
+
+<img src="docs/assets/demo-webhook.jpg" alt="A curl request on the left, the delivered message with its attachment on the right" width="100%">
 
 `202` means queued, not delivered — a send takes seconds and can land mid-reconnect, so the
 caller is released immediately and `GET /notifications/:id` reports how it actually went.

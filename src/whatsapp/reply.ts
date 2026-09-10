@@ -15,7 +15,7 @@ const log = logger.child({ module: 'reply' })
  *
  * `usage` is a function so the mention handle can come from `BOT_DISPLAY_NAME`.
  */
-export const MESSAGES = {
+const MESSAGES = {
   /** Sent when the wording clearly asks for a picture. */
   ackImage: 'Researching and putting the infographic together, back in a moment…',
   /** Default ack: at this point the reply is still most likely text. */

@@ -10,6 +10,27 @@ import {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/**
+ * Drains everything already scheduled, without putting a clock on it.
+ *
+ * Ordering assertions must not race a `setTimeout`: on a loaded machine the timer
+ * overruns, the delivery finishes early, and the assertion reads the wrong state.
+ */
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 5; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+}
+
+/** A delivery that occupies its worker until the test explicitly releases it. */
+const gate = () => {
+  let release = (): void => {}
+  const held = new Promise<void>((resolve) => {
+    release = () => resolve()
+  })
+  return { held, release }
+}
+
 const notification = (to = '5511999999999'): Notification => ({
   to,
   message: 'hello',
@@ -28,9 +49,10 @@ const dispatcher = (delivery: NotificationDelivery, overrides: Partial<Dispatche
 
 describe('notification dispatcher', () => {
   it('accepts before the delivery has finished', async () => {
+    const inFlight = gate()
     let finished = false
     const subject = dispatcher(async () => {
-      await delay(60)
+      await inFlight.held
       finished = true
     })
 
@@ -44,6 +66,7 @@ describe('notification dispatcher', () => {
     const record = await subject.status(accepted.id)
     assert.notEqual(record?.status, 'sent')
 
+    inFlight.release()
     await subject.drain()
   })
 
@@ -72,18 +95,22 @@ describe('notification dispatcher', () => {
   })
 
   it('reports a full queue as QueueUnavailableError', async () => {
-    const subject = dispatcher(async () => delay(80), { concurrency: 1, maxQueued: 1 })
+    // Both deliveries wait on the same gate: the first occupies the only worker,
+    // the second fills the only waiting slot.
+    const held = gate()
+    const subject = dispatcher(async () => held.held, { concurrency: 1, maxQueued: 1 })
 
     const first = subject.send(notification('5511000000001'))
-    await delay(5)
+    await settle()
     const second = subject.send(notification('5511000000002'))
-    await delay(5)
+    await settle()
 
     await assert.rejects(
       () => subject.send(notification('5511000000003')),
       QueueUnavailableError,
     )
 
+    held.release()
     await Promise.all([first, second])
     await subject.drain()
   })
