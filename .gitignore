@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.npm/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# WhatsApp session credentials - NEVER commit these, they grant full account access
+.auth/
+auth_info*/
+*.session
+baileys_store*.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Local data dumps produced by the monitor
+data/
+*.sqlite
+*.sqlite3
+
+# Generated infographic posters (build artefacts, not source)
+generated-images/
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
