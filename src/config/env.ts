@@ -22,10 +22,11 @@ const csv = (value: string | undefined): string[] =>
     .map((part) => part.trim())
     .filter((part) => part.length > 0)
 
-/** `qr` prints a QR code to scan, `code` shows an 8-character code to type into WhatsApp. */
+/** `code` shows an 8-character code to type into WhatsApp, `qr` prints a QR code to scan. */
 export type PairingMode = 'qr' | 'code'
 
-const pairingMode: PairingMode = process.env.PAIRING_MODE === 'code' ? 'code' : 'qr'
+/** Defaults to `code`: QR scanning fails often enough that it is the worse first experience. */
+const pairingMode: PairingMode = process.env.PAIRING_MODE === 'qr' ? 'qr' : 'code'
 
 const aspectRatios = [
   '1:1',

@@ -80,7 +80,7 @@ git clone https://github.com/ndanilo/wa-groupmind.git
 cd wa-groupmind
 npm install
 cp .env.example .env
-# preencha OPENROUTER_API_KEY, TAVILY_API_KEY e PHONE_NUMBER (se parear por código)
+# preencha OPENROUTER_API_KEY, TAVILY_API_KEY e PHONE_NUMBER
 npm run dev
 ```
 
@@ -88,13 +88,16 @@ npm run dev
 
 São dois caminhos, escolhidos com `PAIRING_MODE`.
 
-**Código de pareamento (`PAIRING_MODE=code`)** — recomendado quando a leitura do QR falha.
-Defina `PHONE_NUMBER` com o número que está sendo vinculado, apenas dígitos com código do país e
-sem `+`. O terminal imprime um código de 8 caracteres; digite-o em
-**Configurações → Dispositivos conectados → Conectar com número de telefone**.
+**Código de pareamento (`PAIRING_MODE=code`, o padrão)** — defina `PHONE_NUMBER` com o número
+que está sendo vinculado, apenas dígitos com código do país e sem `+`. O terminal imprime um
+código de 8 caracteres; digite-o em
+**Configurações → Dispositivos conectados → Conectar com número de telefone**. `PHONE_NUMBER` é
+obrigatório nesse modo e o app se recusa a iniciar sem ele.
 
 **QR code (`PAIRING_MODE=qr`)** — imprime um QR no terminal para escanear em
-**Configurações → Dispositivos conectados → Conectar um dispositivo**.
+**Configurações → Dispositivos conectados → Conectar um dispositivo**. Não precisa de
+`PHONE_NUMBER`, mas QR codes no terminal frequentemente não são escaneáveis dependendo da sua
+fonte e do esquema de cores, e é por isso que não são o padrão.
 
 As credenciais ficam em `.auth/` depois do vínculo, então as execuções seguintes reconectam sem
 parear de novo.
@@ -280,8 +283,8 @@ Lida a partir do `.env`; veja [.env.example](.env.example) para a lista completa
 
 | Variável | Padrão | Descrição |
 | --- | --- | --- |
-| `PAIRING_MODE` | `qr` | `qr` ou `code` |
-| `PHONE_NUMBER` | — | Dígitos com código do país, obrigatório para `code` |
+| `PAIRING_MODE` | `code` | `code` ou `qr` |
+| `PHONE_NUMBER` | — | Dígitos com código do país. **Obrigatório**, exceto com `PAIRING_MODE=qr` |
 | `AUTH_DIR` | `.auth` | Pasta das credenciais de sessão |
 | `LOG_LEVEL` | `info` | Nível do pino |
 | `LOG_MESSAGE_CONTENT` | `false` | Loga o corpo das mensagens. Desligado por padrão, por privacidade |

@@ -80,7 +80,7 @@ git clone https://github.com/ndanilo/wa-groupmind.git
 cd wa-groupmind
 npm install
 cp .env.example .env
-# completa OPENROUTER_API_KEY, TAVILY_API_KEY y PHONE_NUMBER (si emparejas por código)
+# completa OPENROUTER_API_KEY, TAVILY_API_KEY y PHONE_NUMBER
 npm run dev
 ```
 
@@ -88,13 +88,16 @@ npm run dev
 
 Hay dos formas, seleccionadas con `PAIRING_MODE`.
 
-**Código de vinculación (`PAIRING_MODE=code`)** — recomendado cuando el escaneo del QR falla.
-Define `PHONE_NUMBER` con el número que vas a vincular, solo dígitos con código de país y sin
-`+`. La terminal imprime un código de 8 caracteres; introdúcelo en
-**Ajustes → Dispositivos vinculados → Vincular con número de teléfono**.
+**Código de vinculación (`PAIRING_MODE=code`, el predeterminado)** — define `PHONE_NUMBER` con
+el número que vas a vincular, solo dígitos con código de país y sin `+`. La terminal imprime un
+código de 8 caracteres; introdúcelo en
+**Ajustes → Dispositivos vinculados → Vincular con número de teléfono**. `PHONE_NUMBER` es
+obligatorio en este modo y la app se niega a arrancar sin él.
 
 **Código QR (`PAIRING_MODE=qr`)** — imprime un QR en la terminal para escanear desde
-**Ajustes → Dispositivos vinculados → Vincular un dispositivo**.
+**Ajustes → Dispositivos vinculados → Vincular un dispositivo**. No necesita `PHONE_NUMBER`,
+pero los códigos QR en la terminal a menudo no se pueden escanear según tu fuente y esquema de
+colores, y por eso no son el predeterminado.
 
 Las credenciales quedan en `.auth/` una vez vinculado, así que las ejecuciones posteriores
 reconectan sin volver a emparejar.
@@ -286,8 +289,8 @@ Se lee de `.env`; consulta [.env.example](.env.example) para la lista completa c
 
 | Variable | Predeterminado | Descripción |
 | --- | --- | --- |
-| `PAIRING_MODE` | `qr` | `qr` o `code` |
-| `PHONE_NUMBER` | — | Dígitos con código de país, obligatorio para `code` |
+| `PAIRING_MODE` | `code` | `code` o `qr` |
+| `PHONE_NUMBER` | — | Dígitos con código de país. **Obligatorio**, salvo con `PAIRING_MODE=qr` |
 | `AUTH_DIR` | `.auth` | Carpeta de credenciales de sesión |
 | `LOG_LEVEL` | `info` | Nivel de pino |
 | `LOG_MESSAGE_CONTENT` | `false` | Registra el cuerpo de los mensajes. Desactivado por defecto, por privacidad |

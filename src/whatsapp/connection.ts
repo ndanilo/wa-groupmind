@@ -76,7 +76,8 @@ export class WhatsAppConnection {
     // Only an unlinked session needs a phone number; a stored one resumes without pairing.
     if (!state.creds.registered && config.pairingMode === 'code' && !config.phoneNumber) {
       throw new Error(
-        'PAIRING_MODE=code requires PHONE_NUMBER (digits with country code, e.g. 5511999999999)',
+        'Pairing by code (the default) requires PHONE_NUMBER: digits with country code, ' +
+          'no "+" or spaces, e.g. 5511999999999. Set PAIRING_MODE=qr to scan a QR instead.',
       )
     }
 

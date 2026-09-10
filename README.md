@@ -78,7 +78,7 @@ git clone https://github.com/ndanilo/wa-groupmind.git
 cd wa-groupmind
 npm install
 cp .env.example .env
-# fill OPENROUTER_API_KEY, TAVILY_API_KEY, and PHONE_NUMBER (if pairing by code)
+# fill OPENROUTER_API_KEY, TAVILY_API_KEY and PHONE_NUMBER
 npm run dev
 ```
 
@@ -86,12 +86,15 @@ npm run dev
 
 Two ways, selected with `PAIRING_MODE`.
 
-**Pairing code (`PAIRING_MODE=code`)** — recommended when QR scanning fails. Set `PHONE_NUMBER`
-to the number you are linking, digits with country code and no `+`. The terminal prints an
-8-character code; enter it under **Settings → Linked devices → Link with phone number instead**.
+**Pairing code (`PAIRING_MODE=code`, the default)** — set `PHONE_NUMBER` to the number you are
+linking, digits with country code and no `+`. The terminal prints an 8-character code; enter it
+under **Settings → Linked devices → Link with phone number instead**. `PHONE_NUMBER` is required
+in this mode and the app refuses to start without it.
 
 **QR code (`PAIRING_MODE=qr`)** — prints a QR in the terminal to scan from
-**Settings → Linked devices → Link a device**.
+**Settings → Linked devices → Link a device**. No `PHONE_NUMBER` needed, but terminal QR codes
+are frequently unscannable depending on your font and colour scheme, which is why they are not
+the default.
 
 Credentials land in `.auth/` once linked, so later runs reconnect without pairing again.
 
@@ -270,8 +273,8 @@ Read from `.env`; see [.env.example](.env.example) for the full commented list.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PAIRING_MODE` | `qr` | `qr` or `code` |
-| `PHONE_NUMBER` | — | Digits with country code, required for `code` |
+| `PAIRING_MODE` | `code` | `code` or `qr` |
+| `PHONE_NUMBER` | — | Digits with country code. **Required** unless `PAIRING_MODE=qr` |
 | `AUTH_DIR` | `.auth` | Session credentials folder |
 | `LOG_LEVEL` | `info` | pino level |
 | `LOG_MESSAGE_CONTENT` | `false` | Log message bodies. Off by default for privacy |
