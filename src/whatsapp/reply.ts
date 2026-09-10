@@ -17,22 +17,22 @@ const log = logger.child({ module: 'reply' })
  */
 export const MESSAGES = {
   /** Sent when the wording clearly asks for a picture. */
-  ackImage: 'Pesquisando e montando o infográfico, já volto…',
+  ackImage: 'Researching and putting the infographic together, back in a moment…',
   /** Default ack: at this point the reply is still most likely text. */
-  ackText: 'Pesquisando, já te respondo…',
+  ackText: 'Looking that up, one moment…',
   usage: (botName: string) =>
-    `Me marca com uma pergunta, tipo:\n@${botName} qual a taxa Selic atual?`,
-  inFlight: 'Ainda estou terminando o seu anterior — um pedidinho de cada vez.',
+    `Mention me with a question, like:\n@${botName} what is the current inflation rate?`,
+  inFlight: 'Still finishing your last one — one request at a time, please.',
   cooldown: (remainingMs: number) => {
     const seconds = Math.max(1, Math.ceil(remainingMs / 1000))
-    return `Aguarde ${seconds}s antes de pedir de novo.`
+    return `Please wait ${seconds}s before asking again.`
   },
-  queueFull: 'Estou com a fila cheia agora. Tenta de novo em alguns minutos.',
-  researchFailed: 'Não consegui pesquisar isso agora. Tenta de novo daqui a pouco.',
-  imageFailed: 'Pesquisei, mas a arte falhou. Tenta de novo daqui a pouco.',
-  emptyAnswer: 'Não consegui montar uma resposta pra isso. Tenta reformular?',
-  jobTimeout: 'Demorou mais do que o esperado. Tenta de novo daqui a pouco.',
-  unknown: 'Algo deu errado por aqui. Tenta de novo daqui a pouco.',
+  queueFull: 'My queue is full right now. Try again in a few minutes.',
+  researchFailed: "I couldn't research that right now. Try again shortly.",
+  imageFailed: 'I found the answer, but the artwork failed. Try again shortly.',
+  emptyAnswer: "I couldn't put an answer together for that. Try rephrasing?",
+  jobTimeout: 'That took longer than expected. Try again shortly.',
+  unknown: 'Something went wrong on my side. Try again shortly.',
 } as const
 
 export type ErrorKind =

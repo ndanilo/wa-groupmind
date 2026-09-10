@@ -1,7 +1,7 @@
 {
-  "name": "whatsapp-infographic",
+  "name": "wa-groupmind",
   "version": "0.2.0",
-  "description": "WhatsApp group bot that researches a question and replies with an AI-generated infographic",
+  "description": "Group chat bot that researches a question and replies with a sourced answer or an AI-generated infographic",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -20,22 +20,24 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ndanilo/whatsapp_monitor.git"
+    "url": "git+https://github.com/ndanilo/wa-groupmind.git"
   },
   "keywords": [
     "whatsapp",
     "baileys",
     "infographic",
     "langchain",
+    "langgraph",
+    "chatbot",
     "nodejs",
     "typescript"
   ],
   "author": "Danilo Novais",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/ndanilo/whatsapp_monitor/issues"
+    "url": "https://github.com/ndanilo/wa-groupmind/issues"
   },
-  "homepage": "https://github.com/ndanilo/whatsapp_monitor#readme",
+  "homepage": "https://github.com/ndanilo/wa-groupmind#readme",
   "dependencies": {
     "@fastify/multipart": "^10.1.1",
     "@langchain/core": "^1.2.1",

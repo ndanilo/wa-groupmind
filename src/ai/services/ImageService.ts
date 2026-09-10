@@ -126,8 +126,8 @@ export class ImageService {
       headers: {
         Authorization: `Bearer ${ImageConfig.apiKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'http://localhost/whatsapp-infographic',
-        'X-Title': 'whatsapp-infographic',
+        'HTTP-Referer': 'https://github.com/ndanilo/wa-groupmind',
+        'X-Title': 'wa-groupmind',
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(ImageConfig.requestTimeoutMs),

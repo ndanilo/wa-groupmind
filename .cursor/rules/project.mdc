@@ -1,0 +1,49 @@
+---
+description: wa-groupmind architecture, module boundaries and commands
+alwaysApply: true
+---
+
+# wa-groupmind
+
+A WhatsApp group bot: `@bot <question>` becomes a researched answer, as text or as a generated
+infographic. Baileys for WhatsApp, a LangGraph.js graph for research and generation. Open
+source and public — see `DISCLAIMER.md` and `PRIVACY.md` before changing anything user-facing.
+
+## Layout
+
+| Path | Role |
+| --- | --- |
+| `src/whatsapp/` | Baileys socket, @mention detection, reply senders |
+| `src/ai/` | Self-contained LangGraph assistant (graph, nodes, services, tools) |
+| `src/notifications/` | Optional outbound HTTP webhook, off by default |
+| `src/lib/` | Shared pino logger and the bounded worker queue |
+| `src/config/env.ts` | The **only** file that reads `process.env` |
+
+## Boundaries that must hold
+
+- `src/config/env.ts` is the single reader of `process.env`. New settings go there with a
+  default, then into `.env.example` and all three READMEs.
+- `src/notifications/gateway/` never imports from `src/whatsapp/` or `src/ai/`.
+- `src/notifications/worker/` never imports anything HTTP.
+- `src/notifications/contract.ts` imports nothing.
+
+The notification subsystem is deliberately extractable into its own repository. Do not couple
+it to the bot.
+
+## Commands
+
+Shell is Windows PowerShell — chain with `;`, not `&&`. Node 24 (`.nvmrc`); CI also runs 22.
+
+```powershell
+npm run dev        # watch mode
+npm run typecheck  # tsc --noEmit
+npm test           # node:test, 127 tests, no network
+npm run build      # emit to dist/
+```
+
+All three of typecheck, test and build must pass before any change is done.
+
+## Scope
+
+Keep changes minimal and self-contained. Prefer official Baileys / LangGraph.js patterns over
+custom abstractions. Do not add dependencies, linters or frameworks unless asked.

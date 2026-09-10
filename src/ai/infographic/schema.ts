@@ -5,11 +5,11 @@ The contract between the writing model and the image model.
 
 Two layouts share the same art/title/subtitle/takeaway:
 
-- stats    — 3–4 figure panels (Selic, inflation, polls…)
+- stats    — 3–4 figure panels (interest rates, inflation, polls…)
 - ranking  — 5–8 named items from search (best series, top investments…)
 
 List questions used to be forced into stats panels and collapsed into meaningless
-aggregates ("10 títulos"). Ranking layout keeps the real names from research.
+aggregates ("10 titles"). Ranking layout keeps the real names from research.
 */
 
 export const BRIEF_LIMITS = {
@@ -37,19 +37,19 @@ export const infographicPanelSchema = z.object({
     .string()
     .min(1)
     .describe(
-      `What this figure measures, in the requested output language, e.g. "Taxa atual". 1-4 words, at most ${BRIEF_LIMITS.label} characters, no trailing punctuation. Never the number itself.`,
+      `What this figure measures, in the requested output language, e.g. "Current rate". 1-4 words, at most ${BRIEF_LIMITS.label} characters, no trailing punctuation. Never the number itself.`,
     ),
   figure: z
     .string()
     .min(1)
     .describe(
-      `The number this panel is about, with its unit attached, e.g. "14,00% a.a." or "R$ 5,18". At most ${BRIEF_LIMITS.figure} characters. Never split the number from its unit, and never write a sentence here.`,
+      `The number this panel is about, with its unit attached, e.g. "14.00% p.a." or "$5.18". At most ${BRIEF_LIMITS.figure} characters. Never split the number from its unit, and never write a sentence here.`,
     ),
   note: z
     .string()
     .min(1)
     .describe(
-      `One supporting line about this figure, in the requested output language, e.g. "Definida pelo Copom em agosto". A complete phrase that stands on its own, at most 10 words and ${BRIEF_LIMITS.note} characters. No source URLs.`,
+      `One supporting line about this figure, in the requested output language, e.g. "Set by the central bank in August". A complete phrase that stands on its own, at most 10 words and ${BRIEF_LIMITS.note} characters. No source URLs.`,
     ),
   icon: z
     .string()
@@ -136,7 +136,7 @@ export const infographicBriefSchema = z.object({
     .array(rankingItemSchema)
     .max(MAX_RANKING_ITEMS)
     .describe(
-      `For layout=ranking only: ${MIN_RANKING_ITEMS}–${MAX_RANKING_ITEMS} named items, best first, each with a real name from the notes. For layout=stats leave this as an empty array []. Never collapse a list into "10 títulos" — list the titles themselves.`,
+      `For layout=ranking only: ${MIN_RANKING_ITEMS}–${MAX_RANKING_ITEMS} named items, best first, each with a real name from the notes. For layout=stats leave this as an empty array []. Never collapse a list into "10 titles" — list the titles themselves.`,
     ),
   takeaway: z
     .string()

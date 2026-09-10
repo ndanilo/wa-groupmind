@@ -1,0 +1,57 @@
+---
+description: TypeScript conventions for wa-groupmind
+globs: **/*.ts
+alwaysApply: false
+---
+
+# TypeScript
+
+Strict ESM with `nodenext` resolution. There is no linter — match the surrounding code.
+
+## Imports carry the `.js` extension
+
+`nodenext` requires the emitted specifier, even in `.ts` source.
+
+```ts
+// BAD — fails at runtime
+import { config } from '../config/env'
+
+// GOOD
+import { config } from '../config/env.js'
+import type { WASocket } from 'baileys'
+```
+
+Use `import type` for type-only imports; `verbatimModuleSyntax` is on.
+
+## Strictness is already maximal
+
+`strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`, `noFallthroughCasesInSwitch`,
+`noUnusedLocals`, `noUnusedParameters`. Indexed access yields `T | undefined` — handle it
+rather than asserting it away. Reach for `as` only when a runtime check has already proven the
+type.
+
+## Style
+
+- `async`/`await`, never raw `.then()` chains.
+- Named exports. No default exports.
+- Errors: log with the `pino` child logger for the module, never `console.log`.
+
+  ```ts
+  const log = logger.child({ module: 'reply' })
+  log.warn({ error, chat: jid }, 'sendMessage failed, retrying')
+  ```
+
+- Comments say *why*, not *what*. If a line needs a comment to explain what it does, rename
+  something instead.
+- No speculative abstraction. Solve the problem in front of you.
+
+## Tests
+
+`node:test` with `node:assert/strict`, in `tests/unit/`. Anything with branching logic needs
+one. No test may touch the network. Env vars are set before the dynamic import, because
+`src/config/env.ts` snapshots `process.env` at module load:
+
+```ts
+process.env.OPENROUTER_API_KEY ??= 'test-openrouter-key'
+const { capAnswer } = await import('../../src/ai/services/LLMService.js')
+```

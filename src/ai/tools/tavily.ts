@@ -21,7 +21,8 @@ export function createWebSearchTool(): TavilySearch {
     topic: 'general',
     /*
     Derived from OUTPUT_LANGUAGE, so a pt-BR bot ranks Brazilian sources first instead of
-    answering "no Brasil" questions with US data.
+    answering "in Brazil" questions with US data. A language tag with no region (plain "en")
+    yields no boost, which is the right default for a global audience.
 
     Tavily applies this only when topic is general, and the model can override topic with
     "news" per call, where it is ignored — so the research prompt also has to carry the

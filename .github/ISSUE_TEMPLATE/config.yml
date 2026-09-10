@@ -1,0 +1,17 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ndanilo/wa-groupmind/security/advisories/new
+    about: Report privately through a GitHub security advisory. Never in a public issue.
+
+  - name: My account got banned / the connection keeps dropping
+    url: https://github.com/ndanilo/wa-groupmind/blob/master/DISCLAIMER.md
+    about: Expected behaviour for an unofficial client. Read the disclaimer first.
+
+  - name: WhatsApp protocol or pairing problem
+    url: https://github.com/WhiskeySockets/Baileys/issues
+    about: Connection, pairing and protocol issues belong upstream with Baileys.
+
+  - name: Commercial or production messaging
+    url: https://business.whatsapp.com/products/business-platform
+    about: Use the official WhatsApp Business Platform (Cloud API) instead of this project.

@@ -1,0 +1,40 @@
+---
+description: Secret hygiene for a public repository that links a WhatsApp account
+alwaysApply: true
+---
+
+# Never commit real data
+
+This repository is public. Anything written here is permanent.
+
+## Absolute rules
+
+- **No credentials in code, tests, docs or comments.** Every key is read through
+  `src/config/env.ts` from `process.env`. There is no other acceptable source.
+- **No real phone numbers, WhatsApp JIDs or group IDs.** Use these placeholders:
+
+  ```ts
+  const phone = '5511999999999'
+  const user = '5511999999999@s.whatsapp.net'
+  const lid = '123456789012345@lid'
+  const group = '120363000000000000@g.us'
+  ```
+
+- **No real names, emails, or message content from actual conversations** in fixtures.
+- **No links to real articles about identifiable people** in tests. Use `example.com`.
+- **Never read, print, copy or commit `.env` or `AUTH_DIR` (`.auth/`).** The auth folder is
+  password-equivalent: it grants full access to the linked WhatsApp account.
+
+## Privacy defaults
+
+`LOG_MESSAGE_CONTENT` defaults to `false` on purpose — the bot sits in groups full of people
+who never consented to having their messages logged. Do not flip that default, and do not add
+logging that writes message bodies, sender identifiers or group names at `info` or above.
+
+Anything that changes what data leaves the machine, or what is written to disk, must be
+reflected in `PRIVACY.md`.
+
+## If a secret is committed
+
+Treat it as leaked. Rotate the credential first, then clean the history. Removing the line in
+a later commit is not a fix.

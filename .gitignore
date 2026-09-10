@@ -11,9 +11,13 @@ build/
 .env
 .env.*
 !.env.example
+.env.local
+*.pem
+*.key
+*.p12
 
 # WhatsApp session credentials - NEVER commit these, they grant full account access
-.auth/
+.auth*/
 auth_info*/
 *.session
 baileys_store*.json
@@ -30,7 +34,7 @@ yarn-error.log*
 coverage/
 .nyc_output/
 
-# Local data dumps produced by the monitor
+# Local data dumps produced at runtime
 data/
 *.sqlite
 *.sqlite3
@@ -42,6 +46,7 @@ generated-images/
 .vscode/*
 !.vscode/extensions.json
 .idea/
+.cursor/mcp.json
 .DS_Store
 Thumbs.db
 desktop.ini

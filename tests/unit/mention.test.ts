@@ -18,7 +18,7 @@ const botContact = (): Contact => ({
   lid: botLid,
 })
 
-const groupJid = '120363429118684279@g.us'
+const groupJid = '120363000000000000@g.us'
 
 function makeMessage(overrides: {
   text?: string

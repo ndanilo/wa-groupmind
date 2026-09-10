@@ -1,42 +1,90 @@
-# whatsapp-infographic
+<div align="center">
 
-A WhatsApp group bot that turns `@bot <pergunta>` into a researched answer — as text by
-default, or as an infographic poster when you ask for one.
-Built on [Baileys](https://github.com/WhiskeySockets/Baileys) for WhatsApp and a self-contained
-LangGraph.js graph (OpenRouter + Tavily) for routing, research and image generation.
+<img src="docs/assets/logo.png" alt="wa-groupmind" width="140">
+
+# wa-groupmind
+
+**A group chat bot that turns `@bot <question>` into a researched, sourced answer — as text by default, or as an AI-generated infographic poster when you ask for one.**
+
+[![CI](https://github.com/ndanilo/wa-groupmind/actions/workflows/ci.yml/badge.svg)](https://github.com/ndanilo/wa-groupmind/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](tsconfig.json)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+**Read this in other languages:** **English** | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md)
+
+<img src="docs/assets/hero.png" alt="Question in, researched answer or infographic out" width="100%">
+
+</div>
+
+---
+
+> [!CAUTION]
+> **Unofficial, unaffiliated, and it can get your account banned.**
+>
+> This project is not affiliated with, endorsed by, or connected to WhatsApp LLC or Meta
+> Platforms, Inc. It reaches WhatsApp through [Baileys](https://github.com/WhiskeySockets/Baileys),
+> a reverse-engineered client. Automated use may breach the
+> [WhatsApp Terms of Service](https://www.whatsapp.com/legal/terms-of-service), and Meta bans
+> accounts for it without warning.
+>
+> **Pair a test number you can afford to lose — never a personal or business-critical one.**
+> For anything commercial, use the official
+> [WhatsApp Business Platform](https://business.whatsapp.com/products/business-platform).
+>
+> Read [DISCLAIMER.md](DISCLAIMER.md) and [PRIVACY.md](PRIVACY.md) before you deploy.
 
 > [!WARNING]
-> Baileys is an unofficial reverse-engineered client. It is not affiliated with or endorsed by
-> WhatsApp or Meta, and using it can get an account banned. Pair a **test number**, never a
-> personal or business-critical one. The folder in `AUTH_DIR` holds credentials that grant
-> full access to the linked account — treat it like a password and keep it out of git.
+> **Every run costs real money** at OpenRouter (chat + image) and Tavily (search). Keep
+> concurrency low and set `ALLOWED_GROUP_JIDS` so strangers cannot spend your credit.
 >
-> Each run costs money on OpenRouter (chat + image) and Tavily (search). Keep concurrency
-> low and prefer an allowlisted set of groups.
+> The folder in `AUTH_DIR` holds credentials granting full access to the linked account.
+> Treat it like a password and keep it out of git.
+
+## What it does
+
+Someone mentions the bot in a group. It researches the question on the live web and replies in
+the same thread — a scannable topic list by default, prose when asked to explain, or a
+generated infographic when the question asks for a picture. Every factual answer ends with the
+URLs it relied on.
+
+```
+@groupmind what is the current inflation rate?     -> bold topic list, with sources
+@groupmind explain why the dollar is rising        -> prose explanation
+@groupmind make an infographic about interest rates -> generated poster
+```
 
 ## Stack
 
-| Concern   | Choice                                              |
-| --------- | --------------------------------------------------- |
-| Runtime   | Node.js 22+ (developed on 24), ESM                  |
-| Language  | TypeScript, strict, `nodenext` resolution           |
-| WhatsApp  | `baileys` 7.x                                       |
+| Concern | Choice |
+| --- | --- |
+| Runtime | Node.js 22+ (developed on 24), ESM |
+| Language | TypeScript, strict, `nodenext` resolution |
+| WhatsApp | `baileys` 7.x |
 | Orchestration | `@langchain/langgraph` `StateGraph` with conditional routing |
-| AI chat   | OpenRouter via `@langchain/openai` + tool-calling agent |
-| Web search| Tavily (`@langchain/tavily`)                        |
-| Images    | OpenRouter `POST /images`                           |
-| Logging   | `pino`, pretty-printed in development               |
+| AI chat | OpenRouter via `@langchain/openai` + tool-calling agent |
+| Web search | Tavily (`@langchain/tavily`) |
+| Images | OpenRouter `POST /images` |
+| Logging | `pino`, pretty-printed in development |
 
 ## Getting started
 
+You need Node 22 or newer, an [OpenRouter](https://openrouter.ai/keys) key, a
+[Tavily](https://app.tavily.com) key, and a WhatsApp number you are willing to risk.
+
 ```bash
+git clone https://github.com/ndanilo/wa-groupmind.git
+cd wa-groupmind
 npm install
 cp .env.example .env
 # fill OPENROUTER_API_KEY, TAVILY_API_KEY, and PHONE_NUMBER (if pairing by code)
 npm run dev
 ```
 
-There are two ways to link the account, selected with `PAIRING_MODE`.
+### Linking the account
+
+Two ways, selected with `PAIRING_MODE`.
 
 **Pairing code (`PAIRING_MODE=code`)** — recommended when QR scanning fails. Set `PHONE_NUMBER`
 to the number you are linking, digits with country code and no `+`. The terminal prints an
@@ -47,49 +95,60 @@ to the number you are linking, digits with country code and no `+`. The terminal
 
 Credentials land in `.auth/` once linked, so later runs reconnect without pairing again.
 
-## Group questions
+### Choosing a language
+
+The bot answers in whatever `OUTPUT_LANGUAGE` says (BCP-47, default `en`). A tag carrying a
+region also tells Tavily which country's sources to rank first — `pt-BR` boosts Brazil, `es-MX`
+boosts Mexico. A plain `en` applies no regional boost.
+
+The bot's own operational messages (acknowledgements, errors, the usage hint) are English and
+live in one place: `MESSAGES` in [src/whatsapp/reply.ts](src/whatsapp/reply.ts).
+
+## How a request flows
 
 Only **group** messages that **@mention the bot** trigger a run. Direct chats are ignored.
 
-```
-@Bot quais as notícias de hoje?            -> bold topic list
-@Bot explica a alta do dólar               -> prose explanation
-@Bot faz um infográfico da taxa Selic      -> poster
-```
-
-What happens:
-
 1. The bot checks the mention, strips the `@…` token, and takes the rest as the question.
-2. If the question is empty it replies with a short PT-BR usage hint.
-3. On accept it sends an immediate quoted ack and starts a typing indicator.
-4. The graph routes the question (see below), researching and generating only what is needed.
+2. If the question is empty it replies with a short usage hint.
+3. On accept it sends an immediate quoted acknowledgement and starts a typing indicator.
+4. The graph routes the question, researching and generating only what is needed.
 5. The reply comes back **quoted**: text tagging the requester, or an image whose caption is
    `*title*` + subtitle (plus the numbered list for rankings).
-6. On any failure, nothing is sent except a friendly PT-BR error (quoted, tagging the
-   requester). Stack traces stay in the log.
+6. On any failure, nothing is sent except a friendly error, quoted and tagging the requester.
+   Stack traces stay in the log.
 
 ### The graph
 
-Text is the default. An image costs a research loop, a brief and an image generation, so
-that branch only runs when the question actually asks for a picture.
+Text is the default. An image costs a research loop, a brief and an image generation, so that
+branch only runs when the question actually asks for a picture.
 
-```
-             +--> writeAnswer --------------------------------> END
-  classify --+
-             +--> research --+--> writeAnswer ----------------> END
-                             |
-                             +--> writeBrief -> styleRefs -> renderPrompt
-                                             -> generateImage -> persist -> END
+```mermaid
+flowchart LR
+    classify{classify}
+    research[research]
+    writeAnswer[writeAnswer]
+    writeBrief[writeBrief]
+    styleRefs[styleRefs]
+    renderPrompt[renderPrompt]
+    generateImage[generateImage]
+    persist[persist]
+    done([END])
+
+    classify -->|"text, no research"| writeAnswer
+    classify -->|"needs research"| research
+    research --> writeAnswer
+    research -->|"image mode"| writeBrief
+    writeBrief --> styleRefs --> renderPrompt --> generateImage --> persist --> done
+    writeAnswer --> done
 ```
 
 `classify` decides two things: **mode** (`text` or `image`) and **needsResearch**.
 
-- A free keyword pass (`src/ai/graph/intent.ts`) catches the obvious asks — `infográfico`,
-  `imagem`, `arte`, `pôster`, `desenha`, `gera uma imagem`, `draw`, `chart`… An image request
-  always implies research, so it short-circuits without paying for a model call.
-- Anything ambiguous goes to a temperature-0 classifier with structured output. If it fails,
-  the fallback is researched text: a researched answer is never wrong, an unwanted image costs
-  money.
+- A free keyword pass ([src/ai/graph/intent.ts](src/ai/graph/intent.ts)) catches the obvious
+  asks — `infographic`, `image`, `poster`, `draw`, `chart`, and their Portuguese equivalents.
+  An image request always implies research, so it short-circuits without paying for a model call.
+- Anything ambiguous goes to a temperature-0 classifier with structured output. If it fails, the
+  fallback is researched text: a researched answer is never wrong, an unwanted image costs money.
 - `needsResearch` is `false` only for small talk or self-contained language tasks (translate
   this, what does this word mean). In that case the answer stage runs under a prompt that
   forbids stating anything time-sensitive, since it has no web access on that path.
@@ -103,24 +162,26 @@ Text answers come in two shapes, and the **default is a scannable topic list** �
 bold headlines with one line of concrete fact each. That is what people actually read in a
 group chat.
 
-Prose is **opt-in**: `detectAnswerDepth` in `src/ai/graph/intent.ts` looks for an explicit ask
-(`detalha`, `explica`, `explique`, `aprofunda`, `esclarece`, `analisa`, `por que`,
-`como <sujeito> funciona/aconteceu/conseguiu`, `mais detalhes`, `explain`, `detailed`…) and only
-then switches to paragraphs, with a larger character budget.
+Prose is **opt-in**: `detectAnswerDepth` in [src/ai/graph/intent.ts](src/ai/graph/intent.ts)
+looks for an explicit ask (`explain`, `detailed`, `analysis`, `why`, plus the Portuguese
+`detalha`, `explica`, `aprofunda`, `por que`…) and only then switches to paragraphs, with a
+larger character budget.
 
-Both budgets (`ANSWER_LIMITS` in `src/ai/services/LLMService.ts`) cover the **body only**. The
-trailing `Fontes:` block — up to five bare URLs — is split off, kept out of the budget and
-re-attached afterwards, so trimming a long answer drops the weakest topic instead of the sources.
+Both budgets (`ANSWER_LIMITS` in [src/ai/services/LLMService.ts](src/ai/services/LLMService.ts))
+cover the **body only**. The trailing sources block — up to five bare URLs — is split off, kept
+out of the budget and re-attached afterwards, so trimming a long answer drops the weakest topic
+instead of the sources.
 
-Every text reply then goes through `toWhatsAppText` (`src/ai/lib/whatsappText.ts`), which
-rewrites whatever markdown the model leaked into the only syntax WhatsApp renders: `**x**` and
-`## x` become `*x*`, bullets become `•`, `[texto](url)` becomes `texto: url`, fences and tables
-flatten. The prompts forbid markdown, but a prompt is not a guarantee.
+Every text reply then goes through `toWhatsAppText`
+([src/ai/lib/whatsappText.ts](src/ai/lib/whatsappText.ts)), which rewrites whatever markdown the
+model leaked into the only syntax WhatsApp renders: `**x**` and `## x` become `*x*`, bullets
+become `•`, `[text](url)` becomes `text: url`, fences and tables flatten. The prompts forbid
+markdown, but a prompt is not a guarantee.
 
-Depth is deliberately **not** delegated to the classifier. Asked to judge it, the model called
-an ordinary "quais as notícias de hoje" *detailed* and produced exactly the wall of prose this
-format exists to avoid. A regex is deterministic, unit-tested, and biased the right way — the
-cost of missing a vague "go deeper" is that the reader rephrases with "explica".
+Depth is deliberately **not** delegated to the classifier. Asked to judge it, the model called an
+ordinary "what's the news today" *detailed* and produced exactly the wall of prose this format
+exists to avoid. A regex is deterministic, unit-tested, and biased the right way — the cost of
+missing a vague "go deeper" is that the reader rephrases with "explain".
 
 ### Inspecting a run
 
@@ -128,38 +189,40 @@ cost of missing a vague "go deeper" is that the reader rephrases with "explica".
 npm run langchain:server
 ```
 
-Opens LangGraph Studio against the same compiled graph (`langgraph.json` →
-`src/ai/graph/studio.ts`). Invoke it with just a question:
+Opens LangGraph Studio against the same compiled graph
+([langgraph.json](langgraph.json) → [src/ai/graph/studio.ts](src/ai/graph/studio.ts)). Invoke it
+with just a question:
 
 ```json
-{ "question": "quais as melhores séries de 2026?" }
+{ "question": "what are the best series of 2026?" }
 ```
 
-Studio renders the routing decision, every node's state update and each tool call, which
-beats reading the pino output when a run goes sideways.
+Studio renders the routing decision, every node's state update and each tool call, which beats
+reading the pino output when a run goes sideways.
 
 ### Concurrency
 
 Several people can ask at once. Requests share a bounded in-process worker pool:
 
 | Rule | Default |
-| ---- | ------- |
+| --- | --- |
 | Concurrent graph runs | `INFOGRAPHIC_CONCURRENCY=3` |
 | Extra waiting slots | `INFOGRAPHIC_MAX_QUEUED=10` |
 | Max 1 in-flight per user | — |
-| Per-user cooldown after a finish | `USER_COOLDOWN_MS=60000` |
+| Per-user cooldown after a finish | `USER_COOLDOWN_MS=5000` |
 | Hard job timeout | `JOB_TIMEOUT_MS=300000` |
 
-When the queue is full or a user is already running / in cooldown, the bot answers with a
-specific PT-BR message instead of starting another paid run.
+When the queue is full or a user is already running or in cooldown, the bot answers with a
+specific message instead of starting another paid run.
 
 ### Safety gates
 
 - Groups only; status broadcasts and channels are skipped.
 - Live messages only (`notify`); reconnect backlogs (`append`) are ignored.
 - Messages older than `REQUEST_MAX_AGE_SECONDS` are ignored.
-- Own messages are never answered (avoids a self-reply loop).
+- Own messages are never answered, which avoids a self-reply loop.
 - Optional `ALLOWED_GROUP_JIDS` allowlist.
+- Message bodies stay out of the logs unless you set `LOG_MESSAGE_CONTENT=true`.
 
 ## Notification webhook
 
@@ -172,13 +235,13 @@ that one is inbound and reactive, this one is outbound only.
 ```bash
 curl -X POST http://127.0.0.1:3001/notifications \
   -H "x-api-key: $NOTIFY_API_KEY" \
-  -F "to=5511987654321" \
+  -F "to=15551234567" \
   -F "message=Deploy finished" \
   -F "file=@chart.png;type=image/png"
 ```
 
-```
-{"id":"7d27fa53-f6fb-4d87-bb97-70a028bc0593","status":"queued"}
+```json
+{ "id": "7d27fa53-f6fb-4d87-bb97-70a028bc0593", "status": "queued" }
 ```
 
 `202` means queued, not delivered — a send takes seconds and can land mid-reconnect, so the
@@ -190,27 +253,28 @@ later. **[Full documentation, design decisions and the repo-split guide →](src
 
 ## Scripts
 
-| Script              | Description                                            |
-| ------------------- | ------------------------------------------------------ |
-| `npm run dev`       | Run from TypeScript; reloads only when `./src` changes |
-| `npm run dev:stable`| Same, **without** file watch (safer for long WhatsApp sessions) |
-| `npm run typecheck` | Type check without emitting                            |
-| `npm run build`     | Compile to `dist/`                                     |
-| `npm start`         | Run the compiled build (expects `npm run build` first) |
-| `npm test`          | Unit tests (`node:test`)                               |
-| `npm run langchain:server` | LangGraph Studio against the assistant graph    |
+| Script | Description |
+| --- | --- |
+| `npm run dev` | Run from TypeScript; reloads only when `./src` changes |
+| `npm run dev:stable` | Same, **without** file watch (safer for long WhatsApp sessions) |
+| `npm run typecheck` | Type check without emitting |
+| `npm run build` | Compile to `dist/` |
+| `npm start` | Run the compiled build (expects `npm run build` first) |
+| `npm test` | Unit tests (`node:test`) |
+| `npm run langchain:server` | LangGraph Studio against the assistant graph |
 | `npm run notify:server` | Notification webhook alone, deliveries logged not sent |
 
 ## Configuration
 
-Read from `.env`; see `.env.example` for the full commented list.
+Read from `.env`; see [.env.example](.env.example) for the full commented list.
 
 | Variable | Default | Description |
-| -------- | ------- | ----------- |
+| --- | --- | --- |
 | `PAIRING_MODE` | `qr` | `qr` or `code` |
 | `PHONE_NUMBER` | — | Digits with country code, required for `code` |
 | `AUTH_DIR` | `.auth` | Session credentials folder |
 | `LOG_LEVEL` | `info` | pino level |
+| `LOG_MESSAGE_CONTENT` | `false` | Log message bodies. Off by default for privacy |
 | `ALLOWED_GROUP_JIDS` | _(all)_ | Comma-separated group JIDs |
 | `REQUEST_MAX_AGE_SECONDS` | `60` | Ignore older messages |
 | `MAX_QUESTION_LENGTH` | `500` | Cap after stripping mentions |
@@ -218,8 +282,8 @@ Read from `.env`; see `.env.example` for the full commented list.
 | `INFOGRAPHIC_MAX_QUEUED` | `10` | Waiting-list size |
 | `USER_COOLDOWN_MS` | `5000` | Gap after a *successful* job from the same user (`0` disables) |
 | `JOB_TIMEOUT_MS` | `300000` | Hard ceiling per job |
-| `BOT_DISPLAY_NAME` | `bobesponja-ai` | Handle shown in usage hints (`@name …`) |
-| `SEND_ACK` | `true` | Immediate "pesquisando…" reply (wording adapts to text vs image) |
+| `BOT_DISPLAY_NAME` | `groupmind` | Handle shown in usage hints (`@name …`) |
+| `SEND_ACK` | `true` | Immediate acknowledgement (wording adapts to text vs image) |
 | `TYPING_INDICATOR` | `true` | Composing presence while working |
 | `SAVE_GENERATED_IMAGES` | `true` | Write posters under `IMAGE_OUTPUT_DIR` |
 | `USE_IMAGE_REFERENCES` | `true` | Editorial topics: fetch real news photos as style refs |
@@ -231,15 +295,15 @@ Read from `.env`; see `.env.example` for the full commented list.
 | `IMAGE_ASPECT_RATIO` | `9:16` | Portrait by default |
 | `IMAGE_RESOLUTION` | `2K` | Below 2K labels get unreadable |
 | `IMAGE_OUTPUT_FORMAT` | `jpeg` | Smaller WhatsApp payloads |
-| `OUTPUT_LANGUAGE` | `pt-BR` | Language of every reply, and the region Tavily boosts (`pt-BR` → `brazil`) |
+| `OUTPUT_LANGUAGE` | `en` | Language of every reply, and the region Tavily boosts |
 
-WhatsApp can still pair without the AI keys. The first `@bot` request without them fails
-with a research error reply and a clear log line.
+WhatsApp can still pair without the AI keys. The first `@bot` request without them fails with a
+research error reply and a clear log line.
 
 Notification webhook (all optional, all inert while `NOTIFY_ENABLED=false`):
 
 | Variable | Default | Description |
-| -------- | ------- | ----------- |
+| --- | --- | --- |
 | `NOTIFY_ENABLED` | `false` | Master switch. Off means Fastify is never even loaded |
 | `NOTIFY_HOST` | `127.0.0.1` | Loopback by default; widen only behind a TLS proxy |
 | `NOTIFY_PORT` | `3001` | |
@@ -250,7 +314,7 @@ Notification webhook (all optional, all inert while `NOTIFY_ENABLED=false`):
 | `NOTIFY_CONCURRENCY` | `2` | Its own worker pool, separate from the bot's |
 | `NOTIFY_MAX_QUEUED` | `50` | Waiting-list size before `503` |
 | `NOTIFY_ALLOWED_RECIPIENTS` | _(any)_ | Comma-separated numbers or JIDs |
-| `NOTIFY_DEFAULT_COUNTRY_CODE` | — | Prepended to local numbers, e.g. `55` |
+| `NOTIFY_DEFAULT_COUNTRY_CODE` | — | Prepended to local numbers, e.g. `1`, `55`, `44` |
 | `NOTIFY_JOB_TTL_MS` | `3600000` | How long a finished job stays queryable |
 | `NOTIFY_READY_TIMEOUT_MS` | `30000` | How long a send waits for a reconnecting socket |
 | `NOTIFY_JOB_TIMEOUT_MS` | `120000` | Whole-job ceiling |
@@ -269,7 +333,7 @@ src/
     connection.ts               socket lifecycle: pairing, reconnect, teardown
     handlers/messages.ts        messages.upsert: log, then route mentions
     mention.ts                  @bot detection (PN + LID) and question parsing
-    reply.ts                    PT-BR ack / text / image / error senders
+    reply.ts                    ack / text / image / error senders
     infographic.ts              orchestrates queue + graph + replies
     socketGate.ts               publishes the currently live socket
     notify.ts                   outbound delivery for the webhook
@@ -311,6 +375,31 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 ```
 
-## License
+## Contributing
 
-[MIT](LICENSE)
+Pull requests are welcome — read [CONTRIBUTING.md](CONTRIBUTING.md) first. The short version:
+run `npm run typecheck`, `npm test` and `npm run build` before you open one, never commit real
+numbers, JIDs or keys, and mirror any user-facing documentation change into all three READMEs.
+
+Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Legal
+
+| Document | What it covers |
+| --- | --- |
+| [LICENSE](LICENSE) | MIT |
+| [DISCLAIMER.md](DISCLAIMER.md) | No affiliation with WhatsApp or Meta, trademark notice, Terms of Service and ban risk, prohibited uses, operator responsibility |
+| [PRIVACY.md](PRIVACY.md) | What is processed, what is sent to OpenRouter and Tavily, what is written to disk, and your obligations as data controller under the GDPR and LGPD |
+| [SECURITY.md](SECURITY.md) | How to report a vulnerability privately, plus operator security notes |
+| [NOTICE](NOTICE) | Third-party attributions and trademark acknowledgements |
+
+**wa-groupmind is not affiliated with, endorsed by, or connected to WhatsApp LLC or Meta
+Platforms, Inc.** WhatsApp and Meta are trademarks of Meta Platforms, Inc., used here only to
+describe interoperability. The maintainers do not condone using this software in any way that
+violates WhatsApp's Terms of Service, and accept no liability for how you use it.
+
+## Acknowledgements
+
+Built on [Baileys](https://github.com/WhiskeySockets/Baileys) by Rajeh Taher and the
+WhiskeySockets community, [LangChain.js and LangGraph.js](https://github.com/langchain-ai/langchainjs),
+[Fastify](https://fastify.dev), [pino](https://getpino.io) and [sharp](https://sharp.pixelplumbing.com).

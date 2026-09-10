@@ -95,12 +95,12 @@ current facts, prices, news or recent events:
 
 Stay inside the scope of the question. If it names a country, a region, a company, an entity
 or a period, search in that scope — write the query in the local language and prefer local
-sources ("no Brasil" means Brazilian sources and the Brazilian entity, not the US parent).
+sources ("in Brazil" means Brazilian sources and the Brazilian entity, not the US parent).
 Never substitute data from somewhere else without labelling it as such, and if the tools only
 returned the wrong scope, say that plainly.
 
 Prioritise things that can be drawn: numbers, percentages, dates, rankings, before/after
-comparisons, and — when the user asks for a list / best-of / top N / recomendações —
+comparisons, and — when the user asks for a list / best-of / top N / recommendations —
 concrete named items (titles, products, funds) with a reason and a score or platform when
 available. Always write a figure with its unit and its period, e.g. "12.4% (year to
 August 2026)". Note when sources disagree and by how much.
@@ -128,12 +128,12 @@ use the number, date and currency conventions of ${language}. The research notes
 in another language; translate them. Never leave a field in the language of the notes.
 
 LAYOUT — choose first:
-- ranking — the user asked for a list, ranking, best-of, top N, "quais são", "o que vale a
-  pena", recomendações, or the answer is naturally a set of named things (series, films,
+- ranking — the user asked for a list, ranking, best-of, top N, "which ones", "what is worth
+  it", recommendations, or the answer is naturally a set of named things (series, films,
   funds, places, tools). Fill \`items\` with ${MIN_RANKING_ITEMS}–${MAX_RANKING_ITEMS} real
   names from the notes (best first). Each item needs name + badge (score/platform/year/return)
-  + why. Leave \`panels\` as []. NEVER collapse a list into aggregates like "10 títulos" or
-  "2 despedidas" — list the names.
+  + why. Leave \`panels\` as []. NEVER collapse a list into aggregates like "10 titles" or
+  "2 finales" — list the names.
 - stats — the answer is a handful of figures (rates, %, dates, poll numbers). Fill
   \`panels\` with 3–4 figures. Leave \`items\` as [].
 
@@ -211,8 +211,8 @@ Rules:
   that disagree.
 - If the notes do not actually answer the question, say so plainly instead of guessing.
 - Never mention notes, research, searching, tools, or that you are an AI. Just answer.
-- Finish with a "Fontes:" line listing at most five bare URLs, one per line. Skip it
-  entirely when the notes carry no URLs.`
+- Finish with a sources line — the word for "Sources" in ${language} followed by a colon —
+  listing at most five bare URLs, one per line. Skip it entirely when the notes carry no URLs.`
 }
 
 /** Default: a scannable list of bold topics. What people actually read in a group chat. */
@@ -227,11 +227,11 @@ FORMAT — a scannable list of topics, NOT flowing prose:
 - One blank line between topics.
 - No opening sentence, no closing summary, no bullet characters (-, •, *) and no numbering
   before the headlines. The bold headline IS the marker.
-- The headline is a real headline, not a category label: "*Selic mantida em 14%*" is right,
-  "*Economia*" is not.
+- The headline is a real headline, not a category label: "*Inflation holds at 4.5%*" is right,
+  "*Economy*" is not.
 - Never let a topic run past two lines. Move the extra fact into its own topic or drop it.
 - Exactly one blank line between topics — never two or three.
-- Stay under ${ANSWER_BODY_LIMITS.topics} characters, not counting the "Fontes:" lines.
+- Stay under ${ANSWER_BODY_LIMITS.topics} characters, not counting the sources lines.
   Drop the weakest topic rather than running over.`
 }
 
@@ -245,8 +245,8 @@ FORMAT — the reader explicitly asked for a full explanation, so write prose:
   not just the headline facts.
 - Use *bold* only for the figures and names that matter most.
 - A numbered list is fine when the question asks for a list, ranking, best-of or top N. In a
-  list, write the real names — never collapse it into "10 títulos".
-- Stay under ${ANSWER_BODY_LIMITS.detailed} characters, not counting the "Fontes:" lines.
+  list, write the real names — never collapse it into "10 titles".
+- Stay under ${ANSWER_BODY_LIMITS.detailed} characters, not counting the sources lines.
   That is a ceiling, not a target: stop when the question is answered instead of padding to
   fill it, and finish your last sentence inside the budget rather than running over.`
 }
@@ -317,8 +317,8 @@ export function createChatModel(
     configuration: {
       baseURL: ConfigModel.apiHost,
       defaultHeaders: {
-        'HTTP-Referer': 'http://localhost/whatsapp-infographic',
-        'X-Title': 'whatsapp-infographic',
+        'HTTP-Referer': 'https://github.com/ndanilo/wa-groupmind',
+        'X-Title': 'wa-groupmind',
       },
     },
   })
@@ -387,7 +387,7 @@ const URL_PATTERN = /https?:\/\/[^\s"'<>)\]}]+/g
 /**
  * Hosts that are never a citable source for a written answer.
  *
- * Tavily happily returns video and social permalinks, and printing "Fontes:
+ * Tavily happily returns video and social permalinks, and printing "Sources:
  * youtube.com/watch?v=…" under a news summary reads as unsourced. Same idea as the host
  * filter in lib/styleRefs.ts, different reason.
  */
@@ -431,10 +431,13 @@ const MAX_ANSWER_SOURCES = 5
 const MAX_SOURCES_SHARE = 0.35
 /** A trailing bare URL line, with or without a bullet WhatsApp would render literally. */
 const SOURCE_LINE = /^(?:[-•*\d.)\s]+)?(https?:\/\/\S+)$/
-/** The line the URLs hang off — "Fontes:", "Sources:" — optionally with one URL inline. */
+/**
+ * The line the URLs hang off. Matched by shape, not by wording, because OUTPUT_LANGUAGE
+ * decides it — "Sources:", "Fontes:", "Fuentes:". Optionally with one URL inline.
+ */
 const SOURCE_HEADER = /^(.{1,24}?:)\s*(https?:\/\/\S+)?$/
 /**
- * Headroom for the largest budget in Portuguese plus five source URLs, which tokenise
+ * Headroom for the largest budget in a verbose language plus five source URLs, which tokenise
  * badly — a single 100-character link costs upwards of 30 tokens. Capping here is what
  * keeps the answer stage from running for minutes, so it has to clear ANSWER_LIMITS or the
  * character budget is fiction: the model would stop mid-sentence before reaching it.
@@ -475,7 +478,7 @@ type AnswerParts = {
  * Splits the trailing sources block off the body.
  *
  * Capping the whole string used to slice inside the URL list, snap back to the newline
- * after the header and send a bare "Fontes…" with every source gone — a researched answer
+ * after the header and send a bare "Sources…" with every source gone — a researched answer
  * that looked unsourced. Separating them makes the body the only thing that can be cut.
  */
 function splitSources(text: string): AnswerParts {

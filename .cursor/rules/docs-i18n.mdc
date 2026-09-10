@@ -1,0 +1,35 @@
+---
+description: Keep the three READMEs in sync
+globs: README*.md
+alwaysApply: false
+---
+
+# The README exists three times
+
+| File | Language | Status |
+| --- | --- | --- |
+| `README.md` | English | Canonical — write here first |
+| `README.pt-BR.md` | Português (Brasil) | Translation |
+| `README.es.md` | Español | Translation |
+
+**A change to one is a change to all three.** Editing only `README.md` leaves the project
+shipping documentation that contradicts itself. Do not hand back a partial update.
+
+## Rules
+
+- Keep the same section order, heading structure and table rows in every file. A reader should
+  be able to follow along across languages.
+- Translate prose. Do **not** translate: code, commands, file paths, env var names, env var
+  values, log strings, or model slugs.
+- Table cells describing a variable get translated; the variable name and its default do not.
+- Each file opens with the switcher line, current language in bold and unlinked:
+
+  ```markdown
+  **Read this in other languages:** **English** | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md)
+  ```
+
+  In `README.pt-BR.md` the lead-in is `**Leia em outros idiomas:**`, in `README.es.md` it is
+  `**Léelo en otros idiomas:**`.
+- Relative links resolve from the repository root in all three, so they are identical across
+  files. Do not rewrite them per language.
+- Adding a language means adding it to the switcher in every existing README.

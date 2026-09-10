@@ -1,0 +1,74 @@
+wa-groupmind
+Copyright (c) 2026 Danilo Novais
+
+This product is licensed under the MIT License. See the LICENSE file for the full text.
+
+================================================================================
+TRADEMARKS
+================================================================================
+
+WhatsApp and Meta are trademarks of Meta Platforms, Inc. This project is not
+affiliated with, associated with, authorised by, endorsed by, or in any way
+officially connected to WhatsApp LLC, Meta Platforms, Inc., or any of their
+subsidiaries or affiliates. These names are used solely to describe what this
+software interoperates with. See DISCLAIMER.md.
+
+All other product names, logos and brands mentioned in this repository are the
+property of their respective owners.
+
+================================================================================
+THIRD-PARTY SOFTWARE
+================================================================================
+
+This product depends on the following third-party packages. They are installed
+from the npm registry and are not redistributed as part of this repository;
+their licences are reproduced with each package under node_modules/.
+
+Runtime dependencies
+--------------------
+
+  baileys                     MIT           https://github.com/WhiskeySockets/Baileys
+    Copyright (c) 2025 Rajeh Taher / WhiskeySockets
+
+  @langchain/core             MIT           https://github.com/langchain-ai/langchainjs
+  @langchain/langgraph        MIT           https://github.com/langchain-ai/langgraphjs
+  @langchain/openai           MIT           https://github.com/langchain-ai/langchainjs
+  @langchain/tavily           MIT           https://github.com/langchain-ai/langchainjs
+  langchain                   MIT           https://github.com/langchain-ai/langchainjs
+    Copyright (c) LangChain, Inc.
+
+  fastify                     MIT           https://github.com/fastify/fastify
+  @fastify/multipart          MIT           https://github.com/fastify/fastify-multipart
+    Copyright (c) The Fastify Team
+
+  pino                        MIT           https://github.com/pinojs/pino
+    Copyright (c) the Pino contributors
+
+  zod                         MIT           https://github.com/colinhacks/zod
+    Copyright (c) Colin McDonnell
+
+  sharp                       Apache-2.0    https://github.com/lovell/sharp
+    Copyright (c) Lovell Fuller and contributors
+
+  qrcode-terminal             Apache-2.0    https://github.com/gtanner/qrcode-terminal
+    Copyright (c) Gord Tanner and contributors
+
+Development dependencies
+------------------------
+
+  typescript                  Apache-2.0    https://github.com/microsoft/TypeScript
+  tsx                         MIT           https://github.com/privatenumber/tsx
+  pino-pretty                 MIT           https://github.com/pinojs/pino-pretty
+  @types/node                 MIT           https://github.com/DefinitelyTyped/DefinitelyTyped
+  @types/qrcode-terminal      MIT           https://github.com/DefinitelyTyped/DefinitelyTyped
+
+================================================================================
+THIRD-PARTY SERVICES
+================================================================================
+
+At runtime this software may send data to services you configure and pay for
+directly. They are governed by their own terms and privacy policies, not by
+this project's licence. See PRIVACY.md.
+
+  OpenRouter    https://openrouter.ai/terms    https://openrouter.ai/privacy
+  Tavily        https://tavily.com/terms       https://tavily.com/privacy

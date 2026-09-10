@@ -1,0 +1,87 @@
+name: Bug report
+description: Something does not work the way it should
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report.
+
+        **Before you post, scrub your paste.** Never include API keys, the contents of your
+        `.env`, anything from your `.auth/` folder, real phone numbers, group IDs, or message
+        content from real conversations. Replace them with placeholders.
+
+        If this is a security vulnerability, do not open an issue — use a
+        [private advisory](https://github.com/ndanilo/wa-groupmind/security/advisories/new).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Set OUTPUT_LANGUAGE to ...
+        2. Mention the bot with "..."
+        3. See ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Run with `LOG_LEVEL=debug` if you can. Redact before pasting.
+      render: shell
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      placeholder: 'node --version, e.g. v24.18.0'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Docker / container
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Version or commit
+      placeholder: 'git rev-parse --short HEAD'
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: The env settings that matter here, values redacted.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I removed all keys, credentials, real phone numbers and group IDs from this report
+          required: true
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: I understand this project is unofficial and unaffiliated with WhatsApp or Meta
+          required: true

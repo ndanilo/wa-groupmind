@@ -65,8 +65,12 @@ export const config = {
   authDir: process.env.AUTH_DIR ?? '.auth',
   logLevel: process.env.LOG_LEVEL ?? 'info',
   maxReconnectAttempts: int(process.env.MAX_RECONNECT_ATTEMPTS, 10),
-  logMessageContent: bool(process.env.LOG_MESSAGE_CONTENT, true),
-  /** Messages you send yourself. On by default so the monitor visibly reacts to your own phone. */
+  /**
+   * Log message bodies. Off by default: the bot sits in groups full of people who never
+   * agreed to have their messages written to your disk. Turn it on only for debugging.
+   */
+  logMessageContent: bool(process.env.LOG_MESSAGE_CONTENT, false),
+  /** Messages you send yourself. On by default so the bot visibly reacts to your own phone. */
   logOwnMessages: bool(process.env.LOG_OWN_MESSAGES, true),
   isProduction: process.env.NODE_ENV === 'production',
 
@@ -88,7 +92,7 @@ export const config = {
    * How the bot refers to itself in usage hints (without the leading @).
    * Does not affect mention detection — that uses the linked account's JID/LID.
    */
-  botDisplayName: stringWithDefault(process.env.BOT_DISPLAY_NAME, 'bobesponja-ai'),
+  botDisplayName: stringWithDefault(process.env.BOT_DISPLAY_NAME, 'groupmind'),
   sendAck: bool(process.env.SEND_ACK, true),
   typingIndicator: bool(process.env.TYPING_INDICATOR, true),
   saveGeneratedImages: bool(process.env.SAVE_GENERATED_IMAGES, true),
@@ -119,7 +123,7 @@ export const config = {
   imagePalette: optionalString(process.env.IMAGE_PALETTE),
   imageRequestTimeoutMs: int(process.env.IMAGE_REQUEST_TIMEOUT_MS, 180_000),
   imageOutputDir: stringWithDefault(process.env.IMAGE_OUTPUT_DIR, 'generated-images'),
-  outputLanguage: stringWithDefault(process.env.OUTPUT_LANGUAGE, 'pt-BR'),
+  outputLanguage: stringWithDefault(process.env.OUTPUT_LANGUAGE, 'en'),
 
   // --- Notification webhook ---
   /** Off by default, so an unchanged .env boots exactly as it did before the webhook existed. */
