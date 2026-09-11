@@ -11,8 +11,17 @@ const log = logger.child({ module: 'graph:research' })
 /** Tool result bodies run to thousands of characters; the log only needs a shape. */
 const RESULT_PREVIEW_CHARS = 120
 
-function logMessage(chat: unknown, message: BaseMessage): void {
-  const base = chat === undefined ? {} : { chat }
+/**
+ * Logs one new message from the loop, with the gap since the previous one.
+ *
+ * `elapsedMs` is the whole point: without it, telling generation time from retrieval time means
+ * subtracting wall-clock timestamps by hand, and the conclusion — that the model is very nearly
+ * all of a slow run and the search API is a rounding error — is not something anyone should have
+ * to reconstruct twice. On a tool result the gap is the API call; on a tool call it is the model
+ * deciding.
+ */
+function logMessage(chat: unknown, message: BaseMessage, elapsedMs: number): void {
+  const base = { ...(chat === undefined ? {} : { chat }), elapsedMs }
 
   if (AIMessage.isInstance(message)) {
     for (const call of message.tool_calls ?? []) {
@@ -61,10 +70,18 @@ export function research(llm: LLMService) {
     config?: LangGraphRunnableConfig,
   ): Promise<AssistantStateUpdate> => {
     const chat = config?.configurable?.chat
+    let lastAt = Date.now()
+
     const result = await llm.makeAIRequestAsync({
       question: state.question,
       freshness: state.freshness,
-      onMessage: (message) => logMessage(chat, message),
+      onMessage: (message) => {
+        const now = Date.now()
+        logMessage(chat, message, now - lastAt)
+        lastAt = now
+      },
+      ...(typeof chat === 'string' ? { chat } : {}),
+      ...(config?.signal === undefined ? {} : { signal: config.signal }),
     })
 
     const { sources } = digestResearch(result.messages)

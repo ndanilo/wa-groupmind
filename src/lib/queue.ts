@@ -158,13 +158,15 @@ export class AdmissionControl {
   }
 
   /**
+   * @param fn receives a signal that aborts when the job times out. Honouring it is what
+   *   stops a timed-out run from continuing to spend money on an answer nobody will read.
    * @param onAdmitted runs after the per-user gate passes and the job is accepted
    *   into the worker pool (possibly still waiting) — the right place for an
    *   immediate ack. Never runs if QueueFullError / cooldown / in-flight reject.
    */
   async admit<T>(
     userId: string,
-    fn: () => Promise<T>,
+    fn: (signal: AbortSignal) => Promise<T>,
     onAdmitted?: () => Promise<void>,
   ): Promise<T> {
     const flying = this.inFlight.get(userId) ?? 0
@@ -183,7 +185,7 @@ export class AdmissionControl {
 
     try {
       const result = await this.queue.run(
-        () => withTimeout(fn(), this.jobTimeoutMs),
+        () => withTimeout(fn, this.jobTimeoutMs),
         onAdmitted,
       )
       // Cooldown only after a successful finish — failed runs must be retryable immediately.
@@ -201,12 +203,25 @@ export class AdmissionControl {
   }
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  if (ms <= 0) return promise
+/**
+ * Races `fn` against the clock, and aborts it when the clock wins.
+ *
+ * Rejecting the outer promise is not enough on its own: the work behind it keeps running, so a
+ * timed-out research run goes on calling a paid model and a paid search API long after the
+ * requester has been told it gave up — and outside the worker pool's concurrency limit, because
+ * the slot is released as soon as this rejects.
+ */
+function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>, ms: number): Promise<T> {
+  const controller = new AbortController()
+  if (ms <= 0) return fn(controller.signal)
 
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new JobTimeoutError()), ms)
-    promise.then(
+    const timer = setTimeout(() => {
+      controller.abort(new JobTimeoutError())
+      reject(new JobTimeoutError())
+    }, ms)
+
+    fn(controller.signal).then(
       (value) => {
         clearTimeout(timer)
         resolve(value)

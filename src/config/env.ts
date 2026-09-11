@@ -89,7 +89,14 @@ export const config = {
   infographicConcurrency: int(process.env.INFOGRAPHIC_CONCURRENCY, 3),
   infographicMaxQueued: int(process.env.INFOGRAPHIC_MAX_QUEUED, 10),
   userCooldownMs: int(process.env.USER_COOLDOWN_MS, 5_000),
-  jobTimeoutMs: int(process.env.JOB_TIMEOUT_MS, 300_000),
+  /**
+   * Backstop for one job, not the primary control.
+   *
+   * The per-node timeouts in `src/ai/graph/graph.ts` are what actually bound a run; this is the
+   * net underneath them. It can be generous now that hitting it aborts the run — before, it
+   * rejected the caller and left the graph spending money on an answer nobody would read.
+   */
+  jobTimeoutMs: int(process.env.JOB_TIMEOUT_MS, 900_000),
 
   // --- Behaviour ---
   /**
@@ -121,9 +128,33 @@ export const config = {
    */
   searchDepth: pickEnum(process.env.SEARCH_DEPTH, searchDepths, 'advanced') as SearchDepth,
   chatModel: stringWithDefault(process.env.CHAT_MODEL, 'deepseek/deepseek-v4-flash-0731'),
-  /** Per chat completion attempt. Structured briefs with a fat research digest routinely need >60s. */
+  /**
+   * Ceiling for one chat completion attempt. Structured briefs with a fat research digest
+   * routinely need >60s; cheaper stages cap themselves below this in `src/ai/config.ts`.
+   */
   chatRequestTimeoutMs: int(process.env.CHAT_REQUEST_TIMEOUT_MS, 120_000),
-  chatMaxRetries: int(process.env.CHAT_MAX_RETRIES, 2),
+  /**
+   * Attempts after the first, per stage.
+   *
+   * One, not two. A retry covers a transient blip; a second only covers a provider that is
+   * persistently unwell, and it triples the worst case — against a job ceiling every stage has
+   * to fit inside.
+   */
+  chatMaxRetries: int(process.env.CHAT_MAX_RETRIES, 1),
+  /**
+   * Thinking budget for the research loop: `off`, `low`, `medium` or `high`.
+   *
+   * Exposed because it is the largest single latency lever in the pipeline and the right setting
+   * depends on the model behind CHAT_MODEL. `low` by default: reasoning is what makes the loop
+   * pick a sensible query and a worthwhile URL, so switching it off entirely trades research
+   * quality for speed, while leaving it unbounded is how a single question reaches eleven
+   * minutes. The classifier and the answer writer never reason — both are mechanical.
+   */
+  chatResearchReasoning: pickEnum(
+    process.env.CHAT_RESEARCH_REASONING,
+    ['off', 'low', 'medium', 'high'] as const,
+    'low',
+  ),
   imageModel: stringWithDefault(process.env.IMAGE_MODEL, 'bytedance-seed/seedream-4.5'),
   imageApiKey: optionalString(process.env.IMAGE_API_KEY),
   imageApiHost: stringWithDefault(process.env.IMAGE_API_HOST, 'https://openrouter.ai/api/v1'),

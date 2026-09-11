@@ -5,6 +5,7 @@ import type { RunnableConfig } from '@langchain/core/runnables'
 
 import { logger } from '../../lib/logger.js'
 import { getTavilyConfig } from '../config.js'
+import { clip } from '../lib/sources.js'
 
 const log = logger.child({ module: 'tools:tavily' })
 
@@ -110,12 +111,94 @@ export async function runSearch(
   client: TavilySearch,
   query: string,
   settings: SearchSettings,
+  signal?: AbortSignal,
 ): Promise<unknown> {
-  return client.invoke({
-    query: settings.scope === undefined ? query : `${query} ${settings.scope}`,
-    topic: settings.topic,
-    ...(settings.timeRange === undefined ? {} : { timeRange: settings.timeRange }),
+  return client.invoke(
+    {
+      query: settings.scope === undefined ? query : `${query} ${settings.scope}`,
+      topic: settings.topic,
+      ...(settings.timeRange === undefined ? {} : { timeRange: settings.timeRange }),
+    },
+    signal === undefined ? undefined : { signal },
+  )
+}
+
+/*
+What a tool result is allowed to cost the research loop.
+
+Tavily's raw response is generous, and on `SEARCH_DEPTH=advanced` with `chunksPerSource: 3` two
+parallel searches can come back as tens of kilobytes of JSON. Every later turn re-reads all of it,
+so the loop pays for those bytes several times over — and none of it survives to the reader anyway:
+`MAX_EXCERPT_CHARS` in ai/lib/sources.ts clips each source while collecting, and the answer stage
+is shown less still.
+
+So these caps are deliberately set where nothing downstream notices. Search snippets keep the part
+a model uses to decide whether an article is worth reading; extracted bodies keep as much as the
+collector would have retained. The fields dropped alongside them — `answer`, `images`,
+`follow_up_questions`, `score`, `response_time` — are either unused (we ask Tavily not to
+pre-summarise) or already expressed by the ordering of the results.
+*/
+const SEARCH_SNIPPET_CHARS = 800
+const EXTRACT_BODY_CHARS = 2000
+
+/** The subset of a Tavily result the loop and the collector both need. */
+type LeanResult = {
+  url: string
+  title?: string
+  content?: string
+  raw_content?: string
+  published_date?: string
+}
+
+function str(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined
+}
+
+/**
+ * Strips a Tavily payload down to what is actually read.
+ *
+ * Returns the payload untouched when it carries no `results` array, because that shape is usually
+ * an error or a rate-limit body, and swallowing it into an empty result list would turn a
+ * diagnosable failure into "the search found nothing".
+ */
+export function leanPayload(payload: unknown, bodyChars: number): unknown {
+  if (payload === null || typeof payload !== 'object') return payload
+
+  const source = payload as Record<string, unknown>
+  const results = source['results']
+  if (!Array.isArray(results)) return payload
+
+  const lean = results.flatMap((entry): LeanResult[] => {
+    if (entry === null || typeof entry !== 'object') return []
+    const result = entry as Record<string, unknown>
+
+    const url = str(result['url'])
+    if (url === undefined) return []
+
+    const raw = str(result['raw_content']) ?? str(result['rawContent'])
+    const content = str(result['content'])
+    const title = str(result['title'])
+    const published = str(result['published_date']) ?? str(result['publishedDate'])
+
+    return [
+      {
+        url,
+        ...(title === undefined ? {} : { title }),
+        ...(content === undefined ? {} : { content: clip(content, bodyChars) }),
+        ...(raw === undefined ? {} : { raw_content: clip(raw, bodyChars) }),
+        ...(published === undefined ? {} : { published_date: published }),
+      },
+    ]
   })
+
+  // Kept because it is the only signal that a URL the model chose could not be read, and without
+  // it the model retries the same dead page.
+  const failed = source['failed_results']
+
+  return {
+    results: lean,
+    ...(Array.isArray(failed) && failed.length > 0 ? { failed_results: failed } : {}),
+  }
 }
 
 /**
@@ -136,7 +219,8 @@ export function createWebSearchTool(client: TavilySearch = createSearchClient())
       // words in it. The resolved topic in the log is the proof it arrived.
       log.debug({ freshness, ...settings }, 'web search settings')
 
-      return JSON.stringify(await runSearch(client, query, settings))
+      const payload = await runSearch(client, query, settings, config.signal)
+      return JSON.stringify(leanPayload(payload, SEARCH_SNIPPET_CHARS))
     },
     {
       name: 'web_search',
@@ -211,12 +295,15 @@ export function createWebExtractTool(client: TavilyExtract = createExtractClient
         })
       }
 
-      return JSON.stringify(
-        await client.invoke({
+      const payload = await client.invoke(
+        {
           urls: articles,
           ...(query === undefined ? {} : { query }),
-        }),
+        },
+        config.signal === undefined ? undefined : { signal: config.signal },
       )
+
+      return JSON.stringify(leanPayload(payload, EXTRACT_BODY_CHARS))
     },
     {
       name: 'web_extract',

@@ -239,6 +239,39 @@ La fecha de hoy se indica en el mensaje de investigación en lugar de consultars
 `get_current_datetime` era el paso uno del prompt y el modelo lo seguía más o menos la mitad de
 las veces. La herramienta sigue ahí para aritmética con fechas.
 
+### El bucle de investigación se limita por tiempo, no por número de llamadas
+
+La investigación es de lejos el nodo más lento, y casi nada de eso es la API de búsqueda. En una
+pregunta que pedía una lista ordenada con dos cifras por elemento, una ejecución gastó **675
+segundos** en el nodo: 667s de generación del modelo contra 8s de Tavily. Y no devolvió nada, porque
+el techo del trabajo se había disparado seis minutos antes. Cuatro cosas aseguran que no se repita.
+
+| Corrección | Dónde |
+| --- | --- |
+| Cancelación. Un trabajo que agota su tiempo aborta la ejecución en lugar de dejar al grafo gastando dinero en una respuesta que nadie va a leer | [src/lib/queue.ts](src/lib/queue.ts), propagado por `runAssistant` hasta la llamada de modelo de cada nodo |
+| Presupuestos de petición por etapa, para que una llamada atascada no se coma el trabajo entero. El peor caso es `timeoutMs × (maxRetries + 1)` por etapa, y los techos de los nodos están dimensionados para caber dentro de `JOB_TIMEOUT_MS` | `budgets` en [src/ai/config.ts](src/ai/config.ts), `NODE_TIMEOUT_MS` en [src/ai/graph/graph.ts](src/ai/graph/graph.ts) |
+| Un presupuesto de razonamiento acotado para el bucle, expuesto como `CHAT_RESEARCH_REASONING`. El razonamiento es la mayor parte del tiempo de generación, y el bucle era la única etapa que aún lo tenía sin límite | `createResearchModel` en [src/ai/services/LLMService.ts](src/ai/services/LLMService.ts) |
+| Un plazo en tiempo real que retira las herramientas y obliga al modelo a escribir sus notas, en vez de dejar que el timeout del nodo tire todas las búsquedas que la ejecución pagó | [src/ai/lib/deadline.ts](src/ai/lib/deadline.ts) |
+
+El presupuesto de herramientas (`maxToolCallsPerRun`, 10) ahora es un techo de **coste**, no de
+latencia. Era 5, lo cual es adecuado para "cuál es la inflación actual" y demasiado justo para una
+lista ordenada de una docena de elementos — esa pregunta llegó a dos de ellos. Una ejecución cortada
+por el plazo se marca como `truncated`, así que la respuesta admite qué parte no pudo confirmarse.
+
+Dos correcciones de payload acompañan esto. Los resultados de las herramientas que llegan al bucle
+se reducen a los campos que realmente se leen (`leanPayload` en
+[src/ai/tools/tavily.ts](src/ai/tools/tavily.ts)): con `SEARCH_DEPTH=advanced` y tres fragmentos por
+fuente, dos búsquedas en paralelo vuelven como decenas de kilobytes de JSON que cada turno posterior
+relee, y nada de eso llega al lector de todos modos, porque `sources.ts` recorta cada fuente al
+recopilar. Los resultados antiguos pasan entonces a eliminarse por completo de la transcripción
+cuando esta supera ~16 mil tokens (`contextEditingMiddleware`), ya que el bucle los incorporó a sus
+propias notas.
+
+Cada turno registra su propio `elapsedMs`, el recuento de tokens incluyendo los de razonamiento
+oculto, y qué proveedor de OpenRouter lo atendió — porque reconstruir ese reparto a mano a partir de
+marcas de tiempo no es algo que nadie deba hacer dos veces. Un turno que supera el tiempo de un solo
+intento se registra como reintentado: LangChain no informa de sus propios reintentos.
+
 ### Las fuentes quedan ligadas a las afirmaciones
 
 Los resultados de las herramientas llegaban a las etapas de escritura como un bloque único por
@@ -346,10 +379,18 @@ el proceso:
 | Plazas extra de espera | `INFOGRAPHIC_MAX_QUEUED=10` |
 | Máximo 1 en curso por usuario | — |
 | Enfriamiento por usuario tras terminar | `USER_COOLDOWN_MS=5000` |
-| Timeout duro del trabajo | `JOB_TIMEOUT_MS=300000` |
+| Red de seguridad de timeout del trabajo | `JOB_TIMEOUT_MS=900000` |
 
 Cuando la cola está llena o el usuario ya está ejecutando o en enfriamiento, el bot responde con un
 mensaje específico en lugar de iniciar otra ejecución de pago.
+
+`JOB_TIMEOUT_MS` es la red, no el control — los techos por nodo en
+[src/ai/graph/graph.ts](src/ai/graph/graph.ts) limitan una ejecución mucho antes que él. Alcanzarlo
+**aborta** la ejecución: antes solo rechazaba a quien llamaba, así que una pregunta que agotaba el
+tiempo recibía una disculpa y el grafo seguía llamando a OpenRouter y Tavily durante minutos, fuera
+del límite de concurrencia, para una respuesta que se descartaba. Si la investigación pasa de 90s el
+grupo recibe además un aviso de "sigo buscando", para que una pregunta realmente difícil no parezca
+un bot muerto.
 
 ### Barreras de seguridad
 
@@ -445,7 +486,7 @@ Se lee de `.env`; consulta [.env.example](.env.example) para la lista completa c
 | `INFOGRAPHIC_CONCURRENCY` | `3` | Ejecuciones paralelas del grafo |
 | `INFOGRAPHIC_MAX_QUEUED` | `10` | Tamaño de la lista de espera |
 | `USER_COOLDOWN_MS` | `5000` | Intervalo tras un trabajo *exitoso* del mismo usuario (`0` lo desactiva) |
-| `JOB_TIMEOUT_MS` | `300000` | Techo duro por trabajo |
+| `JOB_TIMEOUT_MS` | `900000` | Red de seguridad por trabajo; alcanzarlo aborta la ejecución |
 | `BOT_DISPLAY_NAME` | `groupmind` | Nombre mostrado en las ayudas de uso (`@nombre …`) |
 | `SEND_ACK` | `true` | Confirmación inmediata (el texto se adapta a texto vs imagen) |
 | `TYPING_INDICATOR` | `true` | Presencia de "escribiendo" mientras trabaja |
@@ -456,6 +497,9 @@ Se lee de `.env`; consulta [.env.example](.env.example) para la lista completa c
 | `TAVILY_API_KEY` | — | **Obligatoria** para la búsqueda web |
 | `SEARCH_DEPTH` | `advanced` | `basic` o `advanced`. El principal factor de coste en Tavily — ver abajo |
 | `CHAT_MODEL` | `deepseek/deepseek-v4-flash-0731` | Slug de chat de OpenRouter |
+| `CHAT_REQUEST_TIMEOUT_MS` | `120000` | Techo de un intento de completion; las etapas más baratas se limitan por debajo |
+| `CHAT_MAX_RETRIES` | `1` | Intentos después del primero, por etapa |
+| `CHAT_RESEARCH_REASONING` | `low` | Presupuesto de razonamiento del bucle de investigación: `off`, `low`, `medium`, `high` |
 | `IMAGE_MODEL` | `bytedance-seed/seedream-4.5` | Slug de imagen de OpenRouter |
 | `IMAGE_ASPECT_RATIO` | `9:16` | Vertical por defecto |
 | `IMAGE_RESOLUTION` | `2K` | Por debajo de 2K las etiquetas quedan ilegibles |
@@ -526,6 +570,8 @@ src/
     infographic/                esquema Zod del brief + constructor del prompt de imagen
     tools/                      datetime + Tavily, ajustes derivados de la actualidad
     lib/sources.ts              registros de fuente, etiquetado, vínculo de citas
+    lib/deadline.ts             límite de tiempo real del bucle de investigación
+    lib/turnLog.ts              latencia, tokens y proveedor de cada turno
     lib/imageStore.ts           persistencia opcional en disco
 ```
 

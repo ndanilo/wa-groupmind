@@ -1,5 +1,11 @@
 import { ChatOpenAI } from '@langchain/openai'
-import { createAgent, providerStrategy, toolCallLimitMiddleware } from 'langchain'
+import {
+  ClearToolUsesEdit,
+  contextEditingMiddleware,
+  createAgent,
+  providerStrategy,
+  toolCallLimitMiddleware,
+} from 'langchain'
 import { GraphRecursionError } from '@langchain/langgraph'
 import { z } from 'zod/v3'
 import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages'
@@ -7,7 +13,14 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { ClientTool, ServerTool } from '@langchain/core/tools'
 
 import { logger } from '../../lib/logger.js'
-import { getChatConfig, getOutputConfig } from '../config.js'
+import {
+  getChatConfig,
+  getOutputConfig,
+  type ReasoningEffort,
+  type StageBudget,
+} from '../config.js'
+import { DEADLINE_KEY, researchDeadline, researchDeadlineMiddleware } from '../lib/deadline.js'
+import { researchTurnLogMiddleware } from '../lib/turnLog.js'
 import { toWhatsAppText } from '../lib/whatsappText.js'
 import {
   bindSources,
@@ -124,11 +137,16 @@ named items you found (at least five when the sources support it), each with one
 and any score/platform/year from the tools. Do not summarise a list as "10 titles were
 mentioned" — write the titles.
 
-Budget: at most two searches and two extracts. Never repeat a search you have already run
-with different wording or a different language — if the first results did not contain the
-exact figure, they will not on the fourth attempt either. Approximate answers with an honest
-caveat ("around 5.18, and sources vary by a few cents") are correct and useful; silence is
-not. Stop and answer as soon as you can say something true.
+Budget: you are on a clock, not a quota. Spend calls on facts you do not have yet — one more
+item, one more figure, one more year — and stop the moment you can answer. A question about one
+number is done in a search and an extract; a ranked list of ten named things fairly needs
+several. You may be told mid-way that your time is up, in which case write your notes from what
+you already have.
+
+Never repeat a search you have already run with different wording or a different language — if
+the first results did not contain the exact figure, they will not on the fourth attempt either;
+go and read one of the pages instead. Approximate answers with an honest caveat ("around 5.18,
+and sources vary by a few cents") are correct and useful; silence is not.
 
 Be precise rather than readable: other models turn your notes into prose and into a poster.
 Carry each fact's publication date, which the search results give you, and lead with what
@@ -321,34 +339,51 @@ ${format}
 
 export type ChatModelOptions = {
   /**
-   * Caps visible output. Only safe once reasoning is off: on a reasoning model the budget
-   * is spent on hidden tokens first, so a low cap returns empty content.
+   * Caps visible output.
+   *
+   * Dropped unless reasoning is off, rather than trusted: on a reasoning model the budget is
+   * spent on hidden tokens first, so a low cap comes back with empty content. Enforcing the rule
+   * here keeps it from being re-broken at a call site, where the symptom looks like a model
+   * fault instead of a configuration one.
    */
   maxTokens?: number
   /**
-   * OpenRouter reasoning control (`reasoning: { enabled: false }`).
+   * OpenRouter reasoning control.
    *
-   * Default models here are reasoning models, and reasoning dominates generation time —
-   * around 85% of output tokens on a routing or rewriting call, where it buys nothing.
-   * Turn it off for mechanical stages, leave it on where multi-step judgement helps.
+   * `false` disables it outright (`reasoning: { enabled: false }`); an effort level keeps it on
+   * with a bounded thinking budget. Reasoning dominates generation time — around 85% of output
+   * tokens on a routing or rewriting call, where it buys nothing — but it is also what makes the
+   * research loop pick a sensible query and a worthwhile URL, so that stage gets an effort level
+   * rather than off.
    */
-  reasoning?: boolean
+  reasoning?: boolean | ReasoningEffort
+  /**
+   * Per-attempt timeout and retry count for the stage this model serves.
+   *
+   * Explicit at every call site rather than defaulted, because the whole point of splitting the
+   * budgets is that a stage cannot quietly inherit a ceiling meant for another one.
+   */
+  budget: StageBudget
 }
 
 /** The OpenRouter-backed chat model this project talks to. */
-function createChatModel(
-  temperature: number,
-  options: ChatModelOptions = {},
-): BaseChatModel {
+function createChatModel(temperature: number, options: ChatModelOptions): BaseChatModel {
   const ConfigModel = getChatConfig()
+  const reasoningOff = options.reasoning === false
+  const reasoning = reasoningOff
+    ? { enabled: false }
+    : typeof options.reasoning === 'string'
+      ? { effort: options.reasoning }
+      : undefined
+
   return new ChatOpenAI({
     apiKey: ConfigModel.apiKey,
     modelName: ConfigModel.model,
     temperature,
-    ...(options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens }),
-    ...(options.reasoning === false ? { modelKwargs: { reasoning: { enabled: false } } } : {}),
-    timeout: ConfigModel.requestTimeoutMs,
-    maxRetries: ConfigModel.maxRetries,
+    ...(options.maxTokens === undefined || !reasoningOff ? {} : { maxTokens: options.maxTokens }),
+    ...(reasoning === undefined ? {} : { modelKwargs: { reasoning } }),
+    timeout: options.budget.timeoutMs,
+    maxRetries: options.budget.maxRetries,
     configuration: {
       baseURL: ConfigModel.apiHost,
       defaultHeaders: {
@@ -364,8 +399,24 @@ function createChatModel(
  *
  * The agent is stateless config, so one instance is safe to share across concurrent jobs.
  */
+/**
+ * The model driving the research loop, on the one thinking budget worth paying for.
+ *
+ * Kept as its own factory because the loop is the stage whose settings actually move the clock:
+ * at CHAT_RESEARCH_REASONING=low it thinks enough to choose a query and a URL, and bounded enough
+ * that four turns do not add up to eleven minutes.
+ */
+function createResearchModel(): BaseChatModel {
+  const ConfigModel = getChatConfig()
+  return createChatModel(ConfigModel.researchTemperature, {
+    reasoning: ConfigModel.researchReasoning,
+    maxTokens: RESEARCH_MAX_TOKENS,
+    budget: ConfigModel.budgets.research,
+  })
+}
+
 function createResearchAgent(
-  model: BaseChatModel = createChatModel(getChatConfig().researchTemperature),
+  model: BaseChatModel = createResearchModel(),
   tools: AgentTool[] = createResearchTools(),
 ) {
   const ConfigModel = getChatConfig()
@@ -381,6 +432,26 @@ function createResearchAgent(
         runLimit: ConfigModel.maxToolCallsPerRun,
         exitBehavior: 'continue',
       }),
+      /*
+      Old tool results stop being re-sent once the transcript gets big.
+
+      The loop only needs the last couple of results to decide its next move — everything before
+      that has already been folded into its own notes — but the whole transcript was re-read on
+      every turn, so the first search was paid for again on turn four. The collector in
+      ai/lib/sources.ts reads the *streamed* messages rather than what the model last saw, so
+      clearing them here costs no citations.
+      */
+      contextEditingMiddleware({
+        edits: [
+          new ClearToolUsesEdit({
+            trigger: { tokens: CONTEXT_TRIGGER_TOKENS },
+            keep: { messages: 3 },
+            placeholder: '[dropped: already summarised in your notes]',
+          }),
+        ],
+      }),
+      researchDeadlineMiddleware(),
+      researchTurnLogMiddleware(ConfigModel.budgets.research),
     ],
   })
 }
@@ -479,6 +550,26 @@ const BARE_HEADER_LINE = /^([^\s:]{2,20}(?:\s+[^\s:]{2,20})?:)$/
  * leaves room for the sources without letting a runaway answer generate for a minute.
  */
 const ANSWER_MAX_TOKENS = 2600
+
+/**
+ * Ceiling on the research notes, applied only when reasoning is off.
+ *
+ * The notes are an intermediate artefact: the answer stage sees the first
+ * `DIGEST_BUDGETS.answer.findings` characters of them and the brief stage rather less, so anything
+ * past roughly that length is generated and then thrown away. 2500 tokens covers a ten-item
+ * ranked list with a figure and a date on every line, which is the longest thing the prompt
+ * actually asks for.
+ */
+const RESEARCH_MAX_TOKENS = 2500
+
+/**
+ * Transcript size at which the loop stops being re-shown its older tool results.
+ *
+ * Well below any model's context window on purpose: this is a latency control, not an overflow
+ * guard. Two trimmed searches plus two extracts land near this, so it bites exactly when a run
+ * starts re-reading evidence it has already written down.
+ */
+const CONTEXT_TRIGGER_TOKENS = 16_000
 
 function asText(content: unknown): string {
   return typeof content === 'string' ? content : JSON.stringify(content)
@@ -685,12 +776,17 @@ export type ResearchRequest = {
   freshness?: Freshness
   /** Fires once per new message, in order, so a slow loop is not silent. */
   onMessage?: (message: BaseMessage) => void
+  /** Aborts the loop when the job that owns it has given up. */
+  signal?: AbortSignal
+  /** Group JID, so per-turn logs stay attributable while several runs overlap. */
+  chat?: string
 }
 
 /** One call to the answer stage. `research` absent is the no-research path. */
 export type ChatAnswerOptions = {
   research?: ResearchResult
   depth?: AnswerDepth
+  signal?: AbortSignal
 }
 
 export type ChatAnswer = {
@@ -738,8 +834,10 @@ export class LLMService {
 
   constructor(options: LLMServiceOptions = {}) {
     const ConfigModel = getChatConfig()
-    this.researchModel = options.model ?? createChatModel(ConfigModel.researchTemperature)
-    this.briefModel = options.briefer ?? createChatModel(ConfigModel.briefTemperature)
+    this.researchModel = options.model ?? createResearchModel()
+    this.briefModel =
+      options.briefer ??
+      createChatModel(ConfigModel.briefTemperature, { budget: ConfigModel.budgets.brief })
     // Rewriting notes into prose and routing a question are both mechanical: reasoning
     // only added latency (50s+ answers, 12s+ routing) without improving either result.
     this.presenterModel =
@@ -747,10 +845,14 @@ export class LLMService {
       createChatModel(ConfigModel.answerTemperature, {
         maxTokens: ANSWER_MAX_TOKENS,
         reasoning: false,
+        budget: ConfigModel.budgets.answer,
       })
     this.classifierModel =
       options.classifier ??
-      createChatModel(ConfigModel.classifierTemperature, { reasoning: false })
+      createChatModel(ConfigModel.classifierTemperature, {
+        reasoning: false,
+        budget: ConfigModel.budgets.classify,
+      })
 
     // The agent is stateless config compiled into a graph, so build it once here
     // rather than on every request. Safe to share across concurrent jobs.
@@ -780,14 +882,21 @@ export class LLMService {
     const freshness = request.freshness ?? 'none'
     const onMessage = request.onMessage ?? (() => {})
 
+    const deadline = researchDeadline(ConfigModel.researchDeadlineMs)
     const stream = await this.agent.stream(
       { messages: [new HumanMessage(`${todayLine()}\n\nThe user asked:\n${request.question}`)] },
       {
         streamMode: 'values',
         recursionLimit: ConfigModel.recursionLimit,
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
         // The agent is compiled once and shared, so the run's retrieval settings can only
-        // reach the tools through config. web_search and web_extract read it from here.
-        configurable: { [FRESHNESS_KEY]: freshness },
+        // reach the tools through config. web_search and web_extract read it from here, and
+        // researchDeadlineMiddleware reads its own per-run deadline the same way.
+        configurable: {
+          [FRESHNESS_KEY]: freshness,
+          [DEADLINE_KEY]: deadline,
+          ...(request.chat === undefined ? {} : { chat: request.chat }),
+        },
       },
     )
 
@@ -810,8 +919,9 @@ export class LLMService {
       return { messages, truncated: true }
     }
 
-    // The tool budget can also end a run mid-loop, without an exception.
-    return { messages, truncated: endedWithoutAnswer(messages) }
+    // The tool budget and the deadline can both end a run mid-loop without an exception, and a
+    // deadline-cut run answers normally — so the only trace of it is `deadline.hit`.
+    return { messages, truncated: deadline.hit || endedWithoutAnswer(messages) }
   }
 
   /**
@@ -824,6 +934,7 @@ export class LLMService {
   async writeInfographicBriefAsync(
     question: string,
     research: ResearchResult,
+    signal?: AbortSignal,
   ): Promise<InfographicBrief> {
     const digest = digestResearch(research.messages)
     const language = languageName(getOutputConfig().language)
@@ -833,16 +944,19 @@ export class LLMService {
       ? `LAYOUT REQUIRED: ranking. Fill \`items\` with ${MIN_RANKING_ITEMS}–${MAX_RANKING_ITEMS} named entries from the notes (best first). Leave \`panels\` empty []. Do not invent aggregate stats panels.`
       : `LAYOUT: choose ranking if named items answer better, otherwise stats. For stats, prefer chart visuals when numbers move over time or compare.`
 
-    const result = await agent.invoke({
-      messages: [
-        new HumanMessage(
-          // Repeated here because a language instruction that appears only in the
-          // system prompt loses to notes written in another language: the model
-          // copies the notes' language into the fields.
-          `Write every field of the brief in ${language}.\n${layoutHint}\n\n${renderDigest(question, digest, research.truncated, DIGEST_BUDGETS.brief)}`,
-        ),
-      ],
-    })
+    const result = await agent.invoke(
+      {
+        messages: [
+          new HumanMessage(
+            // Repeated here because a language instruction that appears only in the
+            // system prompt loses to notes written in another language: the model
+            // copies the notes' language into the fields.
+            `Write every field of the brief in ${language}.\n${layoutHint}\n\n${renderDigest(question, digest, research.truncated, DIGEST_BUDGETS.brief)}`,
+          ),
+        ],
+      },
+      signal === undefined ? undefined : { signal },
+    )
 
     return normaliseBrief(result.structuredResponse as InfographicBrief)
   }
@@ -863,11 +977,12 @@ export class LLMService {
    * Only called when the free keyword pass in graph/intent.ts is inconclusive, so the
    * common case costs nothing.
    */
-  async classifyIntentAsync(question: string): Promise<Intent> {
+  async classifyIntentAsync(question: string, signal?: AbortSignal): Promise<Intent> {
     const agent = this.getClassifierAgent()
-    const result = await agent.invoke({
-      messages: [new HumanMessage(`Question:\n${question}`)],
-    })
+    const result = await agent.invoke(
+      { messages: [new HumanMessage(`Question:\n${question}`)] },
+      signal === undefined ? undefined : { signal },
+    )
 
     return normaliseIntent(result.structuredResponse as Intent)
   }
@@ -882,14 +997,18 @@ export class LLMService {
     question: string,
     options: ChatAnswerOptions = {},
   ): Promise<ChatAnswer> {
-    const { research, depth = 'topics' } = options
+    const { research, depth = 'topics', signal } = options
     const language = languageName(getOutputConfig().language)
+    const callOptions = signal === undefined ? undefined : { signal }
 
     if (!research) {
-      const response = await this.presenterModel.invoke([
-        new SystemMessage(directAnswerPrompt(language, depth)),
-        new HumanMessage(`Reply in ${language}.\n\n${question}`),
-      ])
+      const response = await this.presenterModel.invoke(
+        [
+          new SystemMessage(directAnswerPrompt(language, depth)),
+          new HumanMessage(`Reply in ${language}.\n\n${question}`),
+        ],
+        callOptions,
+      )
       return {
         text: capAnswer(toWhatsAppText(asText(response.content)), ANSWER_LIMITS[depth]),
         cited: [],
@@ -905,16 +1024,17 @@ export class LLMService {
         ? '\nThis question asks for a list: one topic per real name from the sources, bold headline plus one line each.'
         : '\nReply as three to six topics, each a bold headline plus one line ending in its source tag. No prose paragraphs.'
 
-    const response = await this.presenterModel.invoke([
-      new SystemMessage(
-        detailed ? detailedAnswerPrompt(language) : topicsAnswerPrompt(language),
-      ),
-      // Repeated here for the same reason as the brief stage: a language instruction that
-      // lives only in the system prompt loses to notes written in another language.
-      new HumanMessage(
-        `Write the whole reply in ${language}.${formatHint}\n\n${renderDigest(question, digest, research.truncated, DIGEST_BUDGETS.answer)}`,
-      ),
-    ])
+    const response = await this.presenterModel.invoke(
+      [
+        new SystemMessage(detailed ? detailedAnswerPrompt(language) : topicsAnswerPrompt(language)),
+        // Repeated here for the same reason as the brief stage: a language instruction that
+        // lives only in the system prompt loses to notes written in another language.
+        new HumanMessage(
+          `Write the whole reply in ${language}.${formatHint}\n\n${renderDigest(question, digest, research.truncated, DIGEST_BUDGETS.answer)}`,
+        ),
+      ],
+      callOptions,
+    )
 
     return this.citeAnswer(asText(response.content), digest.sources, depth)
   }

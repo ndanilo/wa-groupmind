@@ -227,6 +227,38 @@ Today's date is stated in the research message rather than fetched: `get_current
 step one of the prompt and the model followed it about half the time. The tool is still there
 for arithmetic on dates.
 
+### The research loop is bounded by time, not by call count
+
+Research is the slowest node by a wide margin, and almost none of that is the search API. On a
+question that asked for a ranked list with two figures per item, one run spent **675 seconds** in
+the node: 667s of model generation against 8s of Tavily. It then returned nothing, because the job
+ceiling had fired six minutes earlier. Four things are in place so that cannot repeat.
+
+| Fix | Where |
+| --- | --- |
+| Cancellation. A timed-out job aborts its run instead of leaving the graph to spend money on an answer nobody will read | [src/lib/queue.ts](src/lib/queue.ts), threaded through `runAssistant` into every node's model call |
+| Per-stage request budgets, so one stalled call cannot eat the job. Worst case is `timeoutMs × (maxRetries + 1)` per stage, and the node ceilings are sized to fit inside `JOB_TIMEOUT_MS` | `budgets` in [src/ai/config.ts](src/ai/config.ts), `NODE_TIMEOUT_MS` in [src/ai/graph/graph.ts](src/ai/graph/graph.ts) |
+| A bounded thinking budget for the loop, exposed as `CHAT_RESEARCH_REASONING`. Reasoning is most of the generation time, and the loop was the one stage that still had it unbounded | `createResearchModel` in [src/ai/services/LLMService.ts](src/ai/services/LLMService.ts) |
+| A wall-clock deadline that takes the tools away and makes the model write its notes, instead of letting the node timeout throw away every search the run paid for | [src/ai/lib/deadline.ts](src/ai/lib/deadline.ts) |
+
+The tool budget (`maxToolCallsPerRun`, 10) is now a **cost** ceiling rather than a latency one. It
+was 5, which is right for "what is the current inflation rate" and far too tight for a ranked list
+of a dozen items — that question got as far as two of them. A run cut short by the deadline is
+marked `truncated`, so the reply admits which part could not be confirmed.
+
+Two payload fixes go with it. Tool results reaching the loop are stripped to the fields that are
+actually read (`leanPayload` in [src/ai/tools/tavily.ts](src/ai/tools/tavily.ts)): on
+`SEARCH_DEPTH=advanced` with three chunks per source, two parallel searches come back as tens of
+kilobytes of JSON that every later turn re-reads, and none of it survives to the reader anyway
+because `sources.ts` clips each source while collecting. Older tool results are then dropped from
+the transcript entirely once it passes ~16k tokens (`contextEditingMiddleware`), since the loop has
+already folded them into its own notes.
+
+Each turn logs its own `elapsedMs`, token counts including hidden reasoning tokens, and which
+OpenRouter provider served it, because reconstructing that split from wall-clock timestamps by hand
+is not something anyone should have to do twice. A turn that outlasts one attempt's timeout is
+logged as retried — LangChain does not report retries itself.
+
 ### Sources are bound to claims
 
 The research loop's tool results used to reach the writing stages as one stringified Tavily
@@ -329,10 +361,17 @@ Several people can ask at once. Requests share a bounded in-process worker pool:
 | Extra waiting slots | `INFOGRAPHIC_MAX_QUEUED=10` |
 | Max 1 in-flight per user | — |
 | Per-user cooldown after a finish | `USER_COOLDOWN_MS=5000` |
-| Hard job timeout | `JOB_TIMEOUT_MS=300000` |
+| Job timeout backstop | `JOB_TIMEOUT_MS=900000` |
 
 When the queue is full or a user is already running or in cooldown, the bot answers with a
 specific message instead of starting another paid run.
+
+`JOB_TIMEOUT_MS` is the net, not the control — the per-node ceilings in
+[src/ai/graph/graph.ts](src/ai/graph/graph.ts) bound a run long before it. Reaching it **aborts**
+the run: it used to only reject the caller, so a timed-out question got an apology and then went on
+calling OpenRouter and Tavily for minutes, outside the concurrency limit, for an answer that was
+discarded. If research passes 90s the group also gets one "still digging" notice, so a genuinely
+hard question does not look like a dead bot.
 
 ### Safety gates
 
@@ -426,7 +465,7 @@ Read from `.env`; see [.env.example](.env.example) for the full commented list.
 | `INFOGRAPHIC_CONCURRENCY` | `3` | Parallel graph runs |
 | `INFOGRAPHIC_MAX_QUEUED` | `10` | Waiting-list size |
 | `USER_COOLDOWN_MS` | `5000` | Gap after a *successful* job from the same user (`0` disables) |
-| `JOB_TIMEOUT_MS` | `300000` | Hard ceiling per job |
+| `JOB_TIMEOUT_MS` | `900000` | Backstop per job; reaching it aborts the run |
 | `BOT_DISPLAY_NAME` | `groupmind` | Handle shown in usage hints (`@name …`) |
 | `SEND_ACK` | `true` | Immediate acknowledgement (wording adapts to text vs image) |
 | `TYPING_INDICATOR` | `true` | Composing presence while working |
@@ -437,6 +476,9 @@ Read from `.env`; see [.env.example](.env.example) for the full commented list.
 | `TAVILY_API_KEY` | — | **Required** for web search |
 | `SEARCH_DEPTH` | `advanced` | `basic` or `advanced`. The main Tavily cost driver — see below |
 | `CHAT_MODEL` | `deepseek/deepseek-v4-flash-0731` | OpenRouter chat slug |
+| `CHAT_REQUEST_TIMEOUT_MS` | `120000` | Ceiling for one completion attempt; cheaper stages cap lower |
+| `CHAT_MAX_RETRIES` | `1` | Attempts after the first, per stage |
+| `CHAT_RESEARCH_REASONING` | `low` | Thinking budget for the research loop: `off`, `low`, `medium`, `high` |
 | `IMAGE_MODEL` | `bytedance-seed/seedream-4.5` | OpenRouter image slug |
 | `IMAGE_ASPECT_RATIO` | `9:16` | Portrait by default |
 | `IMAGE_RESOLUTION` | `2K` | Below 2K labels get unreadable |
@@ -507,6 +549,8 @@ src/
     infographic/                Zod brief schema + image prompt builder
     tools/                      datetime + Tavily, retrieval settings from freshness
     lib/sources.ts              source records, tagging, citation binding
+    lib/deadline.ts             wall-clock bound on the research loop
+    lib/turnLog.ts              per-turn latency, tokens and serving provider
     lib/imageStore.ts           optional disk persistence
 ```
 

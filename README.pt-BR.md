@@ -235,6 +235,39 @@ A data de hoje é informada na mensagem de pesquisa em vez de buscada: `get_curr
 o passo um do prompt e o modelo o seguia mais ou menos metade das vezes. A ferramenta continua lá
 para aritmética com datas.
 
+### O laço de pesquisa é limitado por tempo, não por número de chamadas
+
+A pesquisa é de longe o nó mais lento, e quase nada disso é a API de busca. Em uma pergunta que
+pedia uma lista ordenada com dois números por item, uma execução gastou **675 segundos** no nó: 667s
+de geração do modelo contra 8s de Tavily. E não devolveu nada, porque o teto do job havia disparado
+seis minutos antes. Quatro coisas garantem que isso não se repita.
+
+| Correção | Onde |
+| --- | --- |
+| Cancelamento. Um job que estoura o tempo aborta a execução em vez de deixar o grafo gastando dinheiro em uma resposta que ninguém vai ler | [src/lib/queue.ts](src/lib/queue.ts), propagado por `runAssistant` até a chamada de modelo de cada nó |
+| Orçamentos de requisição por etapa, para que uma chamada travada não consuma o job inteiro. O pior caso é `timeoutMs × (maxRetries + 1)` por etapa, e os tetos dos nós são dimensionados para caber dentro de `JOB_TIMEOUT_MS` | `budgets` em [src/ai/config.ts](src/ai/config.ts), `NODE_TIMEOUT_MS` em [src/ai/graph/graph.ts](src/ai/graph/graph.ts) |
+| Um orçamento de raciocínio limitado para o laço, exposto como `CHAT_RESEARCH_REASONING`. O raciocínio é a maior parte do tempo de geração, e o laço era a única etapa que ainda o tinha sem limite | `createResearchModel` em [src/ai/services/LLMService.ts](src/ai/services/LLMService.ts) |
+| Um prazo em tempo real que retira as ferramentas e obriga o modelo a escrever suas notas, em vez de deixar o timeout do nó jogar fora todas as buscas que a execução pagou | [src/ai/lib/deadline.ts](src/ai/lib/deadline.ts) |
+
+O orçamento de ferramentas (`maxToolCallsPerRun`, 10) agora é um teto de **custo**, não de latência.
+Era 5, o que é adequado para "qual é a inflação atual" e apertado demais para uma lista ordenada de
+uma dúzia de itens — essa pergunta chegou a dois deles. Uma execução interrompida pelo prazo é
+marcada como `truncated`, então a resposta admite qual parte não pôde ser confirmada.
+
+Duas correções de payload acompanham isso. Os resultados das ferramentas que chegam ao laço são
+reduzidos aos campos realmente lidos (`leanPayload` em
+[src/ai/tools/tavily.ts](src/ai/tools/tavily.ts)): com `SEARCH_DEPTH=advanced` e três trechos por
+fonte, duas buscas em paralelo voltam como dezenas de kilobytes de JSON que cada turno seguinte
+relê, e nada disso chega ao leitor de qualquer forma, porque o `sources.ts` corta cada fonte ao
+coletar. Resultados antigos passam então a ser removidos da transcrição por completo quando ela
+ultrapassa ~16 mil tokens (`contextEditingMiddleware`), já que o laço os incorporou às próprias
+notas.
+
+Cada turno registra seu próprio `elapsedMs`, a contagem de tokens incluindo os de raciocínio oculto,
+e qual provedor da OpenRouter o atendeu — porque reconstruir essa divisão à mão a partir de
+timestamps não é algo que alguém deva fazer duas vezes. Um turno que ultrapassa o tempo de uma única
+tentativa é registrado como repetido: o LangChain não reporta as próprias repetições.
+
 ### As fontes ficam ligadas às afirmações
 
 Os resultados das ferramentas chegavam às etapas de escrita como um bloco único por chamada — a
@@ -340,10 +373,18 @@ workers no processo:
 | Vagas extras de espera | `INFOGRAPHIC_MAX_QUEUED=10` |
 | Máximo de 1 em andamento por usuário | — |
 | Intervalo por usuário após concluir | `USER_COOLDOWN_MS=5000` |
-| Timeout rígido do job | `JOB_TIMEOUT_MS=300000` |
+| Rede de segurança de timeout do job | `JOB_TIMEOUT_MS=900000` |
 
 Quando a fila está cheia ou o usuário já está executando ou em intervalo, o bot responde com uma
 mensagem específica em vez de iniciar outra execução paga.
+
+`JOB_TIMEOUT_MS` é a rede, não o controle — os tetos por nó em
+[src/ai/graph/graph.ts](src/ai/graph/graph.ts) limitam uma execução muito antes dele. Alcançá-lo
+**aborta** a execução: antes ele apenas rejeitava quem chamou, então uma pergunta que estourava o
+tempo recebia uma desculpa e o grafo seguia chamando OpenRouter e Tavily por minutos, fora do limite
+de concorrência, para uma resposta que era descartada. Se a pesquisa passa de 90s o grupo também
+recebe um aviso de "ainda estou pesquisando", para que uma pergunta realmente difícil não pareça um
+bot morto.
 
 ### Travas de segurança
 
@@ -438,7 +479,7 @@ Lida a partir do `.env`; veja [.env.example](.env.example) para a lista completa
 | `INFOGRAPHIC_CONCURRENCY` | `3` | Execuções paralelas do grafo |
 | `INFOGRAPHIC_MAX_QUEUED` | `10` | Tamanho da fila de espera |
 | `USER_COOLDOWN_MS` | `5000` | Intervalo após um job *bem-sucedido* do mesmo usuário (`0` desativa) |
-| `JOB_TIMEOUT_MS` | `300000` | Teto rígido por job |
+| `JOB_TIMEOUT_MS` | `900000` | Rede de segurança por job; alcançá-lo aborta a execução |
 | `BOT_DISPLAY_NAME` | `groupmind` | Nome mostrado nas dicas de uso (`@nome …`) |
 | `SEND_ACK` | `true` | Confirmação imediata (o texto se adapta a texto vs imagem) |
 | `TYPING_INDICATOR` | `true` | Presença "digitando" enquanto trabalha |
@@ -449,6 +490,9 @@ Lida a partir do `.env`; veja [.env.example](.env.example) para a lista completa
 | `TAVILY_API_KEY` | — | **Obrigatória** para busca web |
 | `SEARCH_DEPTH` | `advanced` | `basic` ou `advanced`. O principal fator de custo no Tavily — veja abaixo |
 | `CHAT_MODEL` | `deepseek/deepseek-v4-flash-0731` | Slug de chat do OpenRouter |
+| `CHAT_REQUEST_TIMEOUT_MS` | `120000` | Teto de uma tentativa de completion; etapas mais baratas limitam-se abaixo disso |
+| `CHAT_MAX_RETRIES` | `1` | Tentativas após a primeira, por etapa |
+| `CHAT_RESEARCH_REASONING` | `low` | Orçamento de raciocínio do laço de pesquisa: `off`, `low`, `medium`, `high` |
 | `IMAGE_MODEL` | `bytedance-seed/seedream-4.5` | Slug de imagem do OpenRouter |
 | `IMAGE_ASPECT_RATIO` | `9:16` | Retrato por padrão |
 | `IMAGE_RESOLUTION` | `2K` | Abaixo de 2K os rótulos ficam ilegíveis |
@@ -519,6 +563,8 @@ src/
     infographic/                schema Zod do briefing + construtor do prompt de imagem
     tools/                      datetime + Tavily, configurações derivadas da recência
     lib/sources.ts              registros de fonte, etiquetagem, vínculo de citações
+    lib/deadline.ts             limite de tempo real do laço de pesquisa
+    lib/turnLog.ts              latência, tokens e provedor de cada turno
     lib/imageStore.ts           persistência opcional em disco
 ```
 

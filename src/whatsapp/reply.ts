@@ -20,6 +20,14 @@ const MESSAGES = {
   ackImage: 'Researching and putting the infographic together, back in a moment…',
   /** Default ack: at this point the reply is still most likely text. */
   ackText: 'Looking that up, one moment…',
+  /**
+   * Sent once when the research runs long, so a hard question does not look like a dead bot.
+   *
+   * A deep question can legitimately take minutes, and the only thing worse than waiting is
+   * waiting with no idea whether anything is still happening — people re-ask, and the per-user
+   * gate then answers them with "one at a time", which reads like a refusal.
+   */
+  researchSlow: 'This one needs more sources — still digging. Back shortly.',
   usage: (botName: string) =>
     `Mention me with a question, like:\n@${botName} what is the current inflation rate?`,
   inFlight: 'Still finishing your last one — one request at a time, please.',
@@ -115,6 +123,26 @@ export async function sendAck(
  * The client stays invisible (`markOnlineOnConnect: false`), so presence may be
  * ignored. Failures are logged at debug and never thrown.
  */
+/**
+ * Best-effort "still working" nudge. Never throws: a failed nudge must not fail the run.
+ *
+ * Follows SEND_ACK rather than adding a setting of its own — someone who turned the opening ack off
+ * has already said they do not want the bot narrating itself.
+ */
+export async function sendProgress(
+  sock: WASocket,
+  jid: string,
+  message: WAMessage,
+): Promise<void> {
+  if (!config.sendAck) return
+
+  try {
+    await sock.sendMessage(jid, { text: MESSAGES.researchSlow }, { quoted: message })
+  } catch (error: unknown) {
+    log.debug({ error, chat: jid }, 'progress notice failed')
+  }
+}
+
 export function startTyping(sock: WASocket, jid: string): () => void {
   if (!config.typingIndicator) return () => {}
 

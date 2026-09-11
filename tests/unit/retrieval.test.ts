@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { ToolMessage } from '@langchain/core/messages'
 import { TavilyExtract, TavilySearch } from '@langchain/tavily'
 
 /*
@@ -22,9 +23,10 @@ region and therefore no country at all, which is covered in the searchSettings c
 */
 process.env.OUTPUT_LANGUAGE = 'pt-BR'
 
-const { createWebExtractTool, createWebSearchTool, isIndexPage, searchSettings } = await import(
-  '../../src/ai/tools/tavily.js'
-)
+const { createWebExtractTool, createWebSearchTool, isIndexPage, leanPayload, searchSettings } =
+  await import('../../src/ai/tools/tavily.js')
+
+const { collectSources } = await import('../../src/ai/lib/sources.js')
 
 type Params = Record<string, unknown>
 
@@ -210,5 +212,75 @@ describe('web_extract', () => {
     )
 
     assert.equal(api.calls[0]?.['query'], 'who opened the inquiry')
+  })
+})
+
+/*
+The trim exists to keep the research loop from re-reading tens of kilobytes of JSON on every turn,
+but the same bodies are what `collectSources` builds citations from — so the shape it leaves behind
+matters as much as the size.
+*/
+describe('leanPayload', () => {
+  const payload = {
+    query: 'inflation rate',
+    answer: 'pre-summarised text we asked Tavily not to send',
+    images: ['https://example.com/a.png'],
+    follow_up_questions: ['what about unemployment?'],
+    response_time: 1.4,
+    results: [
+      {
+        title: 'Report',
+        url: 'https://example.com/report',
+        content: 'x'.repeat(4000),
+        published_date: 'Thu, 11 Sep 2026 10:00:00 GMT',
+        score: 0.9,
+      },
+    ],
+  }
+
+  it('clips bodies and drops the fields nothing reads', () => {
+    const lean = leanPayload(payload, 800) as {
+      results: Record<string, unknown>[]
+      answer?: unknown
+    }
+
+    assert.equal(lean.answer, undefined)
+    assert.equal('images' in lean, false)
+    assert.equal(lean.results[0]?.['score'], undefined)
+    assert.ok(String(lean.results[0]?.['content']).length <= 801)
+  })
+
+  it('keeps every field a citation is built from', () => {
+    const lean = leanPayload(payload, 800) as { results: Record<string, unknown>[] }
+    const first = lean.results[0]
+
+    assert.equal(first?.['url'], 'https://example.com/report')
+    assert.equal(first?.['title'], 'Report')
+    // Kept verbatim: sources.ts is what normalises it to a bare date.
+    assert.equal(first?.['published_date'], 'Thu, 11 Sep 2026 10:00:00 GMT')
+  })
+
+  it('still parses into a tagged source after the round trip through a tool message', () => {
+    const body = JSON.stringify(leanPayload(payload, 800))
+    const sources = collectSources([new ToolMessage({ content: body, tool_call_id: 'call-1' })])
+
+    assert.equal(sources.length, 1)
+    assert.equal(sources[0]?.tag, 'S1')
+    assert.equal(sources[0]?.title, 'Report')
+    assert.equal(sources[0]?.publishedDate, '2026-09-11')
+  })
+
+  it('keeps failed_results so the model stops retrying a dead URL', () => {
+    const lean = leanPayload(
+      { results: [], failed_results: [{ url: 'https://example.com/gone', error: '404' }] },
+      2000,
+    ) as Record<string, unknown>
+
+    assert.equal((lean['failed_results'] as unknown[]).length, 1)
+  })
+
+  it('passes an error body through untouched rather than reporting no results', () => {
+    const error = { detail: 'rate limit exceeded' }
+    assert.deepEqual(leanPayload(error, 800), error)
   })
 })

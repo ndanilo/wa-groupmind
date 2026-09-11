@@ -1,3 +1,5 @@
+import type { LangGraphRunnableConfig } from '@langchain/langgraph'
+
 import { LLMService } from '../../services/LLMService.js'
 import type { AssistantStateType, AssistantStateUpdate } from '../state.js'
 
@@ -8,7 +10,10 @@ import type { AssistantStateType, AssistantStateUpdate } from '../state.js'
  * When no research ran, the answer stage gets a prompt that forbids volatile facts.
  */
 export function answer(llm: LLMService) {
-  return async (state: AssistantStateType): Promise<AssistantStateUpdate> => {
+  return async (
+    state: AssistantStateType,
+    config?: LangGraphRunnableConfig,
+  ): Promise<AssistantStateUpdate> => {
     const researched =
       state.researchMessages.length > 0
         ? { messages: state.researchMessages, truncated: state.truncated }
@@ -17,6 +22,7 @@ export function answer(llm: LLMService) {
     const written = await llm.writeChatAnswerAsync(state.question, {
       research: researched,
       depth: state.depth,
+      ...(config?.signal === undefined ? {} : { signal: config.signal }),
     })
 
     return { answer: written.text, citedSources: written.cited }

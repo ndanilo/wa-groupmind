@@ -26,11 +26,20 @@ import {
   sendAnswer,
   sendError,
   sendInfographic,
+  sendProgress,
   startTyping,
   type ErrorKind,
 } from './reply.js'
 
 const log = logger.child({ module: 'infographic' })
+
+/**
+ * How long research may run before the group is told it is still going.
+ *
+ * Comfortably past a normal run — a single-fact question finishes well inside this — so the notice
+ * only appears when the question really is a big one.
+ */
+const PROGRESS_AFTER_MS = 90_000
 
 export type InfographicRuntime = {
   graph: AssistantGraph
@@ -146,20 +155,36 @@ async function runRequest(
   log.info({ chat: jid, requester, question, expectsImage }, 'request received')
 
   let stopTyping: (() => void) | undefined
+  let progressTimer: NodeJS.Timeout | undefined
+  const cancelProgress = () => {
+    if (progressTimer === undefined) return
+    clearTimeout(progressTimer)
+    progressTimer = undefined
+  }
 
   try {
     await runtime.admission.admit(
       requester,
-      async () => {
+      async (signal) => {
         const run = await runAssistant(
           runtime.graph,
           question,
           {
-            onNodeStart: (node) => log.info({ chat: jid, node }, 'graph node started'),
-            onStage: (node, elapsedMs) =>
-              log.info({ chat: jid, node, elapsedMs }, 'graph node finished'),
+            onNodeStart: (node) => {
+              log.info({ chat: jid, node }, 'graph node started')
+              if (node !== 'research') return
+              progressTimer = setTimeout(() => {
+                progressTimer = undefined
+                void sendProgress(sock, jid, message)
+              }, PROGRESS_AFTER_MS)
+            },
+            onStage: (node, elapsedMs) => {
+              if (node === 'research') cancelProgress()
+              log.info({ chat: jid, node, elapsedMs }, 'graph node finished')
+            },
           },
           jid,
+          signal,
         )
 
         if (run.mode === 'image') {
@@ -222,6 +247,9 @@ async function runRequest(
       log.error({ chat: jid, ...errorFields(sendErr) }, 'failed to send error reply')
     }
   } finally {
+    // Both fire on every exit path: a timeout or a crash must not leave a timer that later tells
+    // the group the bot is still researching a question it already gave up on.
+    cancelProgress()
     stopTyping?.()
   }
 }

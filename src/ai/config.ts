@@ -1,4 +1,7 @@
 import { requireAiKeys, config } from '../config/env.js'
+import { logger } from '../lib/logger.js'
+
+const log = logger.child({ module: 'ai:config' })
 
 /*
 Validated AI settings derived from the single env reader.
@@ -9,6 +12,17 @@ run is attempted without them.
 */
 
 const keys = () => requireAiKeys()
+
+/** How much hidden thinking a stage gets. `off` is the cheapest and the least careful. */
+export type ReasoningEffort = 'low' | 'medium' | 'high'
+
+/** What one stage is allowed to spend on a single chat completion. */
+export type StageBudget = {
+  /** Per attempt, not per stage. */
+  timeoutMs: number
+  /** Attempts after the first, so the worst case is `timeoutMs * (maxRetries + 1)`. */
+  maxRetries: number
+}
 
 export type ChatConfig = {
   apiKey: string
@@ -22,8 +36,22 @@ export type ChatConfig = {
   classifierTemperature: number
   recursionLimit: number
   maxToolCallsPerRun: number
-  requestTimeoutMs: number
-  maxRetries: number
+  /** How long the research loop may keep calling tools before it must write its notes. */
+  researchDeadlineMs: number
+  /**
+   * Thinking budget for the research loop, or `false` to switch it off.
+   *
+   * The one stage where reasoning earns its cost, since it picks the tools and the queries. It
+   * is also where an unbounded budget hurts most: reasoning is the bulk of generation time, and
+   * generation is very nearly all of a research run.
+   */
+  researchReasoning: false | ReasoningEffort
+  budgets: {
+    classify: StageBudget
+    research: StageBudget
+    brief: StageBudget
+    answer: StageBudget
+  }
 }
 
 export type TavilyConfigType = {
@@ -59,6 +87,27 @@ export type OutputConfigType = {
   imageReferenceCount: number
 }
 
+/*
+Per-stage request budgets, because one stalled call must not be able to eat the whole job.
+
+It used to be a single CHAT_REQUEST_TIMEOUT_MS with CHAT_MAX_RETRIES applied to every stage,
+which made one model call worth up to three times the timeout — longer than JOB_TIMEOUT_MS —
+and the research node makes several in a row.
+
+The env var stays the ceiling: a structured brief over a fat research digest genuinely needs it.
+The other stages cap below it, because routing is a two-field answer and a research turn that
+has not emitted a tool call in 90s is not about to. Lowering the env var still lowers every
+stage; raising it only helps the stage that asked for the room.
+
+Worst case per stage is `timeoutMs * (maxRetries + 1)`, and the node timeouts in graph.ts are
+sized from these numbers so their sum stays under JOB_TIMEOUT_MS. If that stops being true, the
+job ceiling fires on every hard question and the per-node limits never get to work.
+*/
+const stageBudget = (timeoutMs: number, maxRetries: number): StageBudget => ({
+  timeoutMs: Math.min(config.chatRequestTimeoutMs, timeoutMs),
+  maxRetries: Math.min(config.chatMaxRetries, maxRetries),
+})
+
 let chat: ChatConfig | undefined
 let tavily: TavilyConfigType | undefined
 let image: ImageConfigType | undefined
@@ -79,15 +128,48 @@ export function getChatConfig(): ChatConfig {
     classifierTemperature: 0,
     recursionLimit: 30,
     /*
-    Two searches and two extracts, which is what RESEARCH_PROMPT asks for, plus one call of
-    slack. It was 8 against a prompt asking for 4, and the model split the difference
-    differently every run — two tool calls on one pass, five on the next, for the same
-    question. A limit that matches the instruction is one fewer thing left to sampling.
+    A cost ceiling, not a latency one — researchDeadlineMs is what actually bounds the loop.
+
+    It was 5, which is the right shape for "what is the current inflation rate" and far too
+    tight for a question that needs a figure per item: a request to rank a dozen companies on
+    two metrics each got as far as two of them before the budget ran out.
     */
-    maxToolCallsPerRun: 5,
-    requestTimeoutMs: config.chatRequestTimeoutMs,
-    maxRetries: config.chatMaxRetries,
+    maxToolCallsPerRun: 10,
+    /*
+    The real bound on the loop: answer-in-time beats answer-in-K-calls. Sized so the worst case
+    (deadline reached, then one final generation) fits the research node's runTimeout.
+    */
+    researchDeadlineMs: 270_000,
+    researchReasoning:
+      config.chatResearchReasoning === 'off' ? false : config.chatResearchReasoning,
+    budgets: {
+      classify: stageBudget(30_000, 1),
+      research: stageBudget(90_000, 1),
+      brief: stageBudget(120_000, 1),
+      answer: stageBudget(90_000, 1),
+    },
   }
+
+  /*
+  Logged once, on the first run rather than at boot, because building this needs the API keys
+  and the WhatsApp socket is allowed to pair without them.
+
+  Worth a line at all because every number here bounds how long a question can take, and when
+  one of them is wrong the symptom is a slow or truncated answer with nothing in the log to
+  connect it to a setting.
+  */
+  log.info(
+    {
+      model: chat.model,
+      researchReasoning: chat.researchReasoning === false ? 'off' : chat.researchReasoning,
+      maxToolCallsPerRun: chat.maxToolCallsPerRun,
+      researchDeadlineMs: chat.researchDeadlineMs,
+      budgets: chat.budgets,
+      jobTimeoutMs: config.jobTimeoutMs,
+    },
+    'chat pipeline configured',
+  )
+
   return chat
 }
 

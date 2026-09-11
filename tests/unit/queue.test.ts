@@ -223,4 +223,37 @@ describe('AdmissionControl', () => {
       JobTimeoutError,
     )
   })
+
+  // Rejecting the caller is only half the job: the work behind it used to keep calling paid APIs
+  // for minutes after the requester had been told the bot gave up.
+  it('aborts the job it timed out', async () => {
+    const queue = new TaskQueue({ concurrency: 1, maxQueued: 5 })
+    const admission = new AdmissionControl(queue, { cooldownMs: 0, jobTimeoutMs: 40 })
+    let aborted: unknown
+
+    await assert.rejects(
+      () =>
+        admission.admit('user-a', async (signal) => {
+          signal.addEventListener('abort', () => {
+            aborted = signal.reason
+          })
+          await delay(200)
+        }),
+      JobTimeoutError,
+    )
+
+    assert.ok(aborted instanceof JobTimeoutError, 'signal should abort with the timeout reason')
+  })
+
+  it('leaves the signal unaborted when the job finishes in time', async () => {
+    const queue = new TaskQueue({ concurrency: 1, maxQueued: 5 })
+    const admission = new AdmissionControl(queue, { cooldownMs: 0, jobTimeoutMs: 200 })
+
+    const seen = await admission.admit('user-a', async (signal) => {
+      await delay(10)
+      return signal.aborted
+    })
+
+    assert.equal(seen, false)
+  })
 })
