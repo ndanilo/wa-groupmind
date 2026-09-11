@@ -2,19 +2,21 @@ import { ChatOpenAI } from '@langchain/openai'
 import { createAgent, providerStrategy, toolCallLimitMiddleware } from 'langchain'
 import { GraphRecursionError } from '@langchain/langgraph'
 import { z } from 'zod/v3'
-import {
-  AIMessage,
-  HumanMessage,
-  SystemMessage,
-  ToolMessage,
-  type BaseMessage,
-} from '@langchain/core/messages'
+import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { ClientTool, ServerTool } from '@langchain/core/tools'
 
+import { logger } from '../../lib/logger.js'
 import { getChatConfig, getOutputConfig } from '../config.js'
 import { toWhatsAppText } from '../lib/whatsappText.js'
-import { createResearchTools } from '../tools/index.js'
+import {
+  bindSources,
+  clip,
+  collectSources,
+  renderSourceBlocks,
+  type SourceRecord,
+} from '../lib/sources.js'
+import { createResearchTools, FRESHNESS_KEY, type Freshness } from '../tools/index.js'
 import {
   infographicBriefSchema,
   MIN_RANKING_ITEMS,
@@ -24,6 +26,8 @@ import {
 } from '../infographic/schema.js'
 import { prefersRankingLayout } from '../infographic/layout.js'
 import { languageName } from '../infographic/prompt.js'
+
+const log = logger.child({ module: 'llm' })
 
 export type AgentTool = ClientTool | ServerTool
 
@@ -82,16 +86,26 @@ cannot be pushed off-facts by a warmer sampling setting.
 const RESEARCH_PROMPT = `You are a research assistant with live web access. Your notes will
 be turned into an infographic, so concrete figures matter more than prose.
 
-You do not know today's date and your training data is stale, so for any question about
-current facts, prices, news or recent events:
-1. Call get_current_datetime first so you know what "now" means.
-2. Call web_search to find sources. Put the current year in the query when it matters.
-3. If a snippet is too thin to answer, call web_extract on the most promising URL. Never
-   extract a video or social page (youtube.com, instagram.com, facebook.com, tiktok.com,
-   x.com, reddit.com): the page carries no article text, so it wastes the extract budget
-   and cannot be cited. Prefer a news site, an official source or a research page.
-4. Answer only from what the tools returned. If they disagree or come back empty, say so
+Today's date is stated in the request, and recency and region are already applied to every
+search you run, so never ask for them and never put a date or a country in the query.
+
+Your training data is stale, so for any question about current facts, prices, news or
+recent events:
+1. Call web_search to find sources.
+2. If a snippet is too thin to say who did what, call web_extract on the most promising
+   article URL. Never extract a video or social page (youtube.com, instagram.com,
+   facebook.com, tiktok.com, x.com, reddit.com): the page carries no article text, so it
+   wastes the extract budget and cannot be cited. Never extract a front page or a section
+   index either — it carries teasers and no story. Prefer a dated article, an official
+   source or a research page.
+3. Answer only from what the tools returned. If they disagree or come back empty, say so
    instead of filling the gap from memory.
+
+ATTRIBUTION is the one thing you cannot get wrong. For every action, decision, charge or
+figure, write who took it exactly as the source says — the person, court, agency or company
+that acted, not merely someone named nearby in the same article. When a story involves
+several people, say what each one did separately rather than in one sentence. If a source
+does not make the actor explicit, write that the actor is unclear.
 
 Stay inside the scope of the question. If it names a country, a region, a company, an entity
 or a period, search in that scope — write the query in the local language and prefer local
@@ -111,13 +125,14 @@ and any score/platform/year from the tools. Do not summarise a list as "10 title
 mentioned" — write the titles.
 
 Budget: at most two searches and two extracts. Never repeat a search you have already run
-with different wording, a different language, or a narrower date — if the first results did
-not contain the exact figure, they will not on the fourth attempt either. Approximate
-answers with an honest caveat ("around 5.18, and sources vary by a few cents") are correct
-and useful; silence is not. Stop and answer as soon as you can say something true.
+with different wording or a different language — if the first results did not contain the
+exact figure, they will not on the fourth attempt either. Approximate answers with an honest
+caveat ("around 5.18, and sources vary by a few cents") are correct and useful; silence is
+not. Stop and answer as soon as you can say something true.
 
 Be precise rather than readable: other models turn your notes into prose and into a poster.
-Always finish with the URLs you relied on, and note how fresh the information is.`
+Carry each fact's publication date, which the search results give you, and lead with what
+happened most recently. Always finish with the URLs you relied on.`
 
 function briefPrompt(language: string): string {
   return `You turn research notes into the copy for a single poster.
@@ -192,27 +207,45 @@ function answerBase(language: string): string {
 WhatsApp group.
 
 LANGUAGE: write the whole reply in ${language}, using its number, date and currency
-conventions. The notes are often in another language; translate them. Never leave a sentence
-in the language of the notes.
+conventions. The sources are often in another language; translate them. Never leave a
+sentence in the language of the sources.
+
+SOURCES: the request lists the sources behind the research, each labelled [S1], [S2] and so
+on. They are your evidence — the summary above them is only a reading guide, so when the two
+differ, the source text wins. End every line that carries a fact with the tag of the source
+it came from, e.g. [S2], or [S2][S4] when two sources back it. Never write a URL yourself:
+the tags are turned into links for you.
+
+ATTRIBUTION — the rule that matters most:
+- If a name and an action do not appear together in one source's text, do not write them
+  together. Attribute a decision, charge, investigation or statement only to the person,
+  court, agency or company that source says performed it.
+- Being named in the same story is not the same as having acted. Someone under
+  investigation, someone mentioned as a subject, and the body that opened the case are
+  three different roles — never merge them.
+- When you cannot tell from the sources who acted, write the fact without an actor rather
+  than guessing one.
 
 Rules:
 - Answer the question that was asked, nothing adjacent to it. Respect its scope: the country,
-  entity, period or figure it names. If the notes only cover a different scope — the US parent
-  instead of the Brazilian company, last year instead of this one — say so in one line rather
-  than answering about the other thing.
-- Use ONLY the facts in the notes. Never add anything from your own knowledge, and never
-  invent a number, date, name or URL.
-- Copy every proper name — people, companies, places, titles — exactly as the notes spell
+  entity, period or figure it names. If the sources only cover a different scope — the US
+  parent instead of the local company, last year instead of this one — say so in one line
+  rather than answering about the other thing.
+- Use ONLY the facts in the request. Never add anything from your own knowledge, and never
+  invent a number, date, name or tag.
+- Copy every proper name — people, companies, places, titles — exactly as the sources spell
   it, character for character. Never re-spell, complete, translate or abbreviate a name;
-  if the notes spell it two ways, use the one the sources agree on.
+  if the sources spell it two ways, use the one they agree on.
+- Prefer what was published most recently. When a source is older than the question implies,
+  say when it is from ("according to yesterday's survey").
 - WhatsApp formatting only: *bold* is a single asterisk each side, _italic_ sparingly.
   NEVER use markdown headings (#), NEVER use ** for bold, no tables, no code blocks.
 - Keep any caveat that genuinely matters: a figure that moves, an approximate value, sources
   that disagree.
-- If the notes do not actually answer the question, say so plainly instead of guessing.
+- If the sources do not actually answer the question, say so plainly instead of guessing.
 - Never mention notes, research, searching, tools, or that you are an AI. Just answer.
-- Finish with a sources line — the word for "Sources" in ${language} followed by a colon —
-  listing at most five bare URLs, one per line. Skip it entirely when the notes carry no URLs.`
+- Finish with one line holding only the word for "Sources" in ${language}, followed by a
+  colon. Write nothing after it: the links are added for you.`
 }
 
 /** Default: a scannable list of bold topics. What people actually read in a group chat. */
@@ -220,15 +253,16 @@ function topicsAnswerPrompt(language: string): string {
   return `${answerBase(language)}
 
 FORMAT — a scannable list of topics, NOT flowing prose:
-- Three to six topics, most important first.
+- Three to six topics, most important first. When several of the listed sources cover the
+  same story, that is the important one — lead with it.
 - Each topic is exactly two lines:
     *Short bold headline*
-    One sentence carrying the concrete fact — a number, a name, a date.
+    One sentence carrying the concrete fact — a number, a name, a date — ending in its tag.
 - One blank line between topics.
 - No opening sentence, no closing summary, no bullet characters (-, •, *) and no numbering
   before the headlines. The bold headline IS the marker.
 - The headline is a real headline, not a category label: "*Inflation holds at 4.5%*" is right,
-  "*Economy*" is not.
+  "*Economy*" is not. A headline that names someone must name the one who acted.
 - Never let a topic run past two lines. Move the extra fact into its own topic or drop it.
 - Exactly one blank line between topics — never two or three.
 - Stay under ${ANSWER_BODY_LIMITS.topics} characters, not counting the sources lines.
@@ -246,6 +280,7 @@ FORMAT — the reader explicitly asked for a full explanation, so write prose:
 - Use *bold* only for the figures and names that matter most.
 - A numbered list is fine when the question asks for a list, ranking, best-of or top N. In a
   list, write the real names — never collapse it into "10 titles".
+- End each sentence that carries a fact with its source tag.
 - Stay under ${ANSWER_BODY_LIMITS.detailed} characters, not counting the sources lines.
   That is a ceiling, not a target: stop when the question is answered instead of padding to
   fill it, and finish your last sentence inside the budget rather than running over.`
@@ -359,14 +394,10 @@ export type ResearchResult = {
 export type ResearchDigest = {
   /** The research agent's own answer: already synthesised, just not friendly. */
   findings: string
-  /** Truncated raw tool output, so later stages can quote concrete details. */
-  evidence: string[]
-  /** Every URL the tools returned, deduplicated. */
-  sources: string[]
+  /** Every citable source the run retrieved, deduplicated and tagged. */
+  sources: SourceRecord[]
 }
 
-/** Per-tool-result cap. Full pages would crowd out the findings and cost tokens. */
-const MAX_EVIDENCE_CHARS = 1200
 /*
 How much of the research each writing stage gets to see.
 
@@ -374,24 +405,18 @@ The brief stays tight — huge evidence is what makes structured output crawl, a
 only needs a handful of figures. The answer stage gets more, because a reply budget it can
 never fill with real material is an invitation to pad: 5000 characters of prose cannot come
 out of 2500 characters of notes without something being invented.
+
+`findings` shrank when the source blocks arrived: the summary is now the reading guide and
+the blocks are the evidence, so spending the budget on the blocks is what lets an actor be
+checked against the sentence that named them.
 */
 const DIGEST_BUDGETS = {
-  brief: { findings: 2500, evidence: 3, evidenceChars: 500 },
-  answer: { findings: 4000, evidence: 4, evidenceChars: 900 },
+  brief: { findings: 2000, sources: 4, excerptChars: 400 },
+  answer: { findings: 3000, sources: 8, excerptChars: 700 },
 } as const
 
 type DigestBudget = (typeof DIGEST_BUDGETS)[keyof typeof DIGEST_BUDGETS]
 
-const MAX_SOURCES = 10
-const URL_PATTERN = /https?:\/\/[^\s"'<>)\]}]+/g
-/**
- * Hosts that are never a citable source for a written answer.
- *
- * Tavily happily returns video and social permalinks, and printing "Sources:
- * youtube.com/watch?v=…" under a news summary reads as unsourced. Same idea as the host
- * filter in lib/styleRefs.ts, different reason.
- */
-const UNCITABLE_HOST = /(?:youtube\.com|youtu\.be|instagram\.com|facebook\.com|fbcdn\.net|tiktok\.com|x\.com|twitter\.com|reddit\.com)/i
 /**
  * Per-depth length budgets for the whole message. WhatsApp accepts ~4000 chars, but a wall
  * of text in a group chat is its own failure — topics stays scannable, detailed explains.
@@ -437,6 +462,14 @@ const SOURCE_LINE = /^(?:[-•*\d.)\s]+)?(https?:\/\/\S+)$/
  */
 const SOURCE_HEADER = /^(.{1,24}?:)\s*(https?:\/\/\S+)?$/
 /**
+ * The same header standing alone, which is what the prompt now asks for: the links are
+ * appended from the tags the writer used, so it writes the word and stops.
+ *
+ * Two words at most, and no colon inside them, because a longer phrase ending in a colon
+ * is more likely to be a sentence the reader wanted than a header.
+ */
+const BARE_HEADER_LINE = /^([^\s:]{2,20}(?:\s+[^\s:]{2,20})?:)$/
+/**
  * Headroom for the largest budget in a verbose language plus five source URLs, which tokenise
  * badly — a single 100-character link costs upwards of 30 tokens. Capping here is what
  * keeps the answer stage from running for minutes, so it has to clear ANSWER_LIMITS or the
@@ -451,21 +484,8 @@ function asText(content: unknown): string {
   return typeof content === 'string' ? content : JSON.stringify(content)
 }
 
-/**
- * Truncates notes without splitting the last token.
- *
- * A hard slice lands inside a URL often enough to matter, and the writing stages copy what
- * they are shown: half a link in the notes becomes a dead link in the answer.
- */
-function clip(value: string, max: number): string {
-  if (value.length <= max) return value
-
-  const cut = value.slice(0, max)
-  // The last whitespace, i.e. the start of the token the slice broke.
-  const boundary = cut.search(/\s\S*$/)
-
-  return `${boundary > max * 0.8 ? cut.slice(0, boundary) : cut}…`
-}
+/** Fallback header word, for a model that ignored the instruction to write its own. */
+const DEFAULT_SOURCES_HEADER = 'Sources:'
 
 type AnswerParts = {
   body: string
@@ -506,6 +526,28 @@ function splitSources(text: string): AnswerParts {
     header: header?.[1],
     sources,
   }
+}
+
+/**
+ * Lifts the trailing sources block off the body, whether or not the writer listed URLs.
+ *
+ * The prompt asks for the header word in ${language} and nothing after it, so usually there
+ * is no URL list for `splitSources` to anchor on and the header is simply the last line.
+ * Keeping the model's own word is what lets an arbitrary OUTPUT_LANGUAGE stay in one
+ * language: hardcoding "Sources:" here would put English under a German answer.
+ */
+function splitHeaderAndSources(text: string): AnswerParts {
+  const listed = splitSources(text)
+  if (listed.header !== undefined) return listed
+
+  const lines = listed.body.split('\n')
+  let index = lines.length - 1
+  while (index >= 0 && (lines[index] ?? '').trim() === '') index -= 1
+
+  const header = BARE_HEADER_LINE.exec((lines[index] ?? '').trim())?.[1]
+  if (header === undefined) return listed
+
+  return { body: lines.slice(0, index).join('\n').trim(), header, sources: listed.sources }
 }
 
 /** Renders the sources block, dropping links that would eat into the answer itself. */
@@ -599,27 +641,9 @@ function endedWithoutAnswer(messages: BaseMessage[]): boolean {
 
 /** Collapses a finished agent run into just what the later stages need to see. */
 export function digestResearch(messages: BaseMessage[]): ResearchDigest {
-  const evidence: string[] = []
-  const sources = new Set<string>()
-
-  for (const message of messages) {
-    if (!ToolMessage.isInstance(message)) continue
-
-    const body = asText(message.content)
-
-    for (const url of body.match(URL_PATTERN) ?? []) {
-      const clean = url.replace(/[.,;]+$/, '')
-      if (UNCITABLE_HOST.test(clean)) continue
-      sources.add(clean)
-    }
-
-    evidence.push(`${message.name ?? 'tool'}: ${clip(body, MAX_EVIDENCE_CHARS)}`)
-  }
-
   return {
     findings: lastAnswer(messages),
-    evidence,
-    sources: [...sources].slice(0, MAX_SOURCES),
+    sources: collectSources(messages),
   }
 }
 
@@ -629,24 +653,18 @@ function renderDigest(
   truncated: boolean,
   budget: DigestBudget,
 ): string {
-  const findings = clip(digest.findings, budget.findings)
-
-  const evidence = digest.evidence
-    .slice(0, budget.evidence)
-    .map((item) => clip(item, budget.evidenceChars))
-
   const sections = [
     `The user asked:\n${question}`,
-    `\nWhat the research found:\n${findings}`,
+    `\nSummary of the research (a reading guide, not the evidence):\n${clip(digest.findings, budget.findings)}`,
   ]
 
-  if (evidence.length > 0) {
-    sections.push(`\nRaw evidence (truncated):\n${evidence.join('\n\n')}`)
-  }
-
   if (digest.sources.length > 0) {
-    // Has to stay ahead of MAX_ANSWER_SOURCES: the answer can only cite what it sees here.
-    sections.push(`\nSource URLs:\n${digest.sources.slice(0, MAX_ANSWER_SOURCES + 3).join('\n')}`)
+    sections.push(
+      `\nSources. Cite these by tag; the source text is the evidence:\n${renderSourceBlocks(
+        digest.sources,
+        { excerptChars: budget.excerptChars, limit: budget.sources, includeUrl: false },
+      )}`,
+    )
   }
 
   if (truncated) {
@@ -658,6 +676,41 @@ function renderDigest(
   }
 
   return sections.join('\n')
+}
+
+/** One call to the research stage. */
+export type ResearchRequest = {
+  question: string
+  /** Recency the sources have to satisfy. Decided by keyword in graph/intent.ts. */
+  freshness?: Freshness
+  /** Fires once per new message, in order, so a slow loop is not silent. */
+  onMessage?: (message: BaseMessage) => void
+}
+
+/** One call to the answer stage. `research` absent is the no-research path. */
+export type ChatAnswerOptions = {
+  research?: ResearchResult
+  depth?: AnswerDepth
+}
+
+export type ChatAnswer = {
+  /** The finished WhatsApp message, sources block included. */
+  text: string
+  /** The URLs the answer actually cited, in the order it used them. */
+  cited: string[]
+}
+
+/**
+ * States today's date in the request instead of making the loop ask for it.
+ *
+ * `get_current_datetime` was step one of the research prompt, and the model followed it
+ * about half the time: one run opened with the date and the next went straight to search
+ * without ever establishing what "today" meant. A sentence costs nothing and cannot be
+ * skipped.
+ */
+function todayLine(): string {
+  const now = new Date()
+  return `Today is ${now.toISOString().slice(0, 10)} (${now.toUTCString()}). Read "today" and "now" as that date.`
 }
 
 export type LLMServiceOptions = {
@@ -722,14 +775,20 @@ export class LLMService {
    * Streamed rather than invoked so callers can report progress while it runs.
    * `onMessage` fires once per new message, in order.
    */
-  async makeAIRequestAsync(
-    userPrompt: string,
-    onMessage: (message: BaseMessage) => void = () => {},
-  ): Promise<ResearchResult> {
+  async makeAIRequestAsync(request: ResearchRequest): Promise<ResearchResult> {
     const ConfigModel = getChatConfig()
+    const freshness = request.freshness ?? 'none'
+    const onMessage = request.onMessage ?? (() => {})
+
     const stream = await this.agent.stream(
-      { messages: [new HumanMessage(userPrompt)] },
-      { streamMode: 'values', recursionLimit: ConfigModel.recursionLimit },
+      { messages: [new HumanMessage(`${todayLine()}\n\nThe user asked:\n${request.question}`)] },
+      {
+        streamMode: 'values',
+        recursionLimit: ConfigModel.recursionLimit,
+        // The agent is compiled once and shared, so the run's retrieval settings can only
+        // reach the tools through config. web_search and web_extract read it from here.
+        configurable: { [FRESHNESS_KEY]: freshness },
+      },
     )
 
     let messages: BaseMessage[] = []
@@ -821,9 +880,9 @@ export class LLMService {
    */
   async writeChatAnswerAsync(
     question: string,
-    research?: ResearchResult,
-    depth: AnswerDepth = 'topics',
-  ): Promise<string> {
+    options: ChatAnswerOptions = {},
+  ): Promise<ChatAnswer> {
+    const { research, depth = 'topics' } = options
     const language = languageName(getOutputConfig().language)
 
     if (!research) {
@@ -831,7 +890,10 @@ export class LLMService {
         new SystemMessage(directAnswerPrompt(language, depth)),
         new HumanMessage(`Reply in ${language}.\n\n${question}`),
       ])
-      return capAnswer(toWhatsAppText(asText(response.content)), ANSWER_LIMITS[depth])
+      return {
+        text: capAnswer(toWhatsAppText(asText(response.content)), ANSWER_LIMITS[depth]),
+        cited: [],
+      }
     }
 
     const digest = digestResearch(research.messages)
@@ -840,8 +902,8 @@ export class LLMService {
     const formatHint = detailed
       ? '\nThe reader asked for an explanation, so write prose paragraphs.'
       : prefersRankingLayout(question)
-        ? '\nThis question asks for a list: one topic per real name from the notes, bold headline plus one line each.'
-        : '\nReply as three to six topics, each a bold headline plus one line. No prose paragraphs.'
+        ? '\nThis question asks for a list: one topic per real name from the sources, bold headline plus one line each.'
+        : '\nReply as three to six topics, each a bold headline plus one line ending in its source tag. No prose paragraphs.'
 
     const response = await this.presenterModel.invoke([
       new SystemMessage(
@@ -854,6 +916,50 @@ export class LLMService {
       ),
     ])
 
-    return capAnswer(toWhatsAppText(asText(response.content)), ANSWER_LIMITS[depth])
+    return this.citeAnswer(asText(response.content), digest.sources, depth)
+  }
+
+  /**
+   * Turns the tags the writer used back into the link list the reader sees.
+   *
+   * The list used to be whatever the writer copied out of the notes, over a flat dump of
+   * every URL the run touched — which is a record of what was searched, not of what the
+   * answer rests on. Ten links under a five-topic summary said nothing about which link
+   * backed which topic. Resolving tags instead means each link is there because a sentence
+   * needed it, and a tag that resolves to nothing is a claim with no source behind it,
+   * which is worth a log line even though there is nothing safe to do about it here.
+   */
+  private citeAnswer(
+    raw: string,
+    records: SourceRecord[],
+    depth: AnswerDepth,
+  ): ChatAnswer {
+    const bound = bindSources(toWhatsAppText(raw), records)
+
+    if (bound.unknownTags.length > 0) {
+      log.warn(
+        { tags: bound.unknownTags, available: records.length },
+        'answer cited a source that was never retrieved',
+      )
+    }
+
+    // A writer that ignored the tagging rule would otherwise send an unsourced answer,
+    // which is worse than an imprecisely sourced one.
+    const cited = bound.cited.length > 0 ? bound.cited : records.slice(0, MAX_ANSWER_SOURCES)
+    const urls = cited.slice(0, MAX_ANSWER_SOURCES).map((record) => record.url)
+
+    // Nothing to hang a header off, so the body is the whole reply and any trailing
+    // colon line it happens to end on is the writer's, not ours to remove.
+    if (urls.length === 0) {
+      return { text: capAnswer(bound.body, ANSWER_LIMITS[depth]), cited: [] }
+    }
+
+    const parts = splitHeaderAndSources(bound.body)
+    const header = parts.header ?? DEFAULT_SOURCES_HEADER
+
+    return {
+      text: capAnswer(`${parts.body}\n\n${header}\n${urls.join('\n')}`, ANSWER_LIMITS[depth]),
+      cited: urls,
+    }
   }
 }

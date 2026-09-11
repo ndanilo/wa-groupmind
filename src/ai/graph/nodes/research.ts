@@ -2,6 +2,7 @@ import { AIMessage, ToolMessage, type BaseMessage } from '@langchain/core/messag
 import type { LangGraphRunnableConfig } from '@langchain/langgraph'
 
 import { logger } from '../../../lib/logger.js'
+import type { SourceRecord } from '../../lib/sources.js'
 import { digestResearch, LLMService } from '../../services/LLMService.js'
 import type { AssistantStateType, AssistantStateUpdate } from '../state.js'
 
@@ -31,6 +32,24 @@ function logMessage(chat: unknown, message: BaseMessage): void {
 }
 
 /**
+ * The publication dates at either end of what the run retrieved.
+ *
+ * Logged rather than shown to anyone: "this answer was built on yesterday's reporting" is
+ * invisible in the reply, and was invisible in the log too, which is the only place a
+ * stale-looking answer can be told apart from a stale source.
+ */
+function dateRange(records: SourceRecord[]): { newestSource?: string; oldestSource?: string } {
+  const dates = records
+    .map((record) => record.publishedDate)
+    .filter((date): date is string => date !== undefined)
+    .sort()
+
+  if (dates.length === 0) return {}
+
+  return { newestSource: dates.at(-1), oldestSource: dates[0] }
+}
+
+/**
  * Runs the tool-calling research loop and parks the raw messages in state.
  *
  * This is the slowest node by a wide margin, so every tool call and result is logged as it
@@ -42,15 +61,25 @@ export function research(llm: LLMService) {
     config?: LangGraphRunnableConfig,
   ): Promise<AssistantStateUpdate> => {
     const chat = config?.configurable?.chat
-    const result = await llm.makeAIRequestAsync(state.question, (message) =>
-      logMessage(chat, message),
-    )
+    const result = await llm.makeAIRequestAsync({
+      question: state.question,
+      freshness: state.freshness,
+      onMessage: (message) => logMessage(chat, message),
+    })
+
     const { sources } = digestResearch(result.messages)
+    const dates = dateRange(sources)
+
+    log.info(
+      { chat, freshness: state.freshness, sources: sources.length, ...dates },
+      'research collected',
+    )
 
     return {
       researchMessages: result.messages,
       truncated: result.truncated,
-      sources,
+      sources: sources.map((record) => record.url),
+      ...dates,
     }
   }
 }

@@ -14,7 +14,11 @@ export function answer(llm: LLMService) {
         ? { messages: state.researchMessages, truncated: state.truncated }
         : undefined
 
-    const text = await llm.writeChatAnswerAsync(state.question, researched, state.depth)
-    return { answer: text }
+    const written = await llm.writeChatAnswerAsync(state.question, {
+      research: researched,
+      depth: state.depth,
+    })
+
+    return { answer: written.text, citedSources: written.cited }
   }
 }

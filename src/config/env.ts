@@ -48,6 +48,9 @@ type Resolution = (typeof resolutions)[number]
 const outputFormats = ['png', 'jpeg', 'webp'] as const
 type OutputFormat = (typeof outputFormats)[number]
 
+const searchDepths = ['basic', 'advanced'] as const
+type SearchDepth = (typeof searchDepths)[number]
+
 const pickEnum = <T extends readonly string[]>(
   value: string | undefined,
   allowed: T,
@@ -107,6 +110,16 @@ export const config = {
   // --- AI providers ---
   openRouterApiKey: optionalString(process.env.OPENROUTER_API_KEY),
   tavilyApiKey: optionalString(process.env.TAVILY_API_KEY),
+  /**
+   * How thoroughly Tavily reads each result. The main Tavily cost driver.
+   *
+   * `advanced` by default because the snippets are what an answer gets attributed from: on
+   * `basic` a result comes back as a couple of sentences, which is enough to know a story
+   * exists and not enough to know who acted in it. Tavily bills by depth rather than by
+   * result count, so this is the one search setting that changes what a run costs — set it
+   * to `basic` to halve that at the price of thinner evidence.
+   */
+  searchDepth: pickEnum(process.env.SEARCH_DEPTH, searchDepths, 'advanced') as SearchDepth,
   chatModel: stringWithDefault(process.env.CHAT_MODEL, 'deepseek/deepseek-v4-flash-0731'),
   /** Per chat completion attempt. Structured briefs with a fat research digest routinely need >60s. */
   chatRequestTimeoutMs: int(process.env.CHAT_REQUEST_TIMEOUT_MS, 120_000),

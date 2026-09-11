@@ -185,7 +185,8 @@ flowchart LR
     writeAnswer --> done
 ```
 
-`classify` decide dos cosas: **modo** (`text` o `image`) y **needsResearch**.
+`classify` decide cuatro cosas: **modo** (`text` o `image`), **needsResearch**, **depth** y
+**freshness**.
 
 - Una pasada gratuita por palabras clave ([src/ai/graph/intent.ts](src/ai/graph/intent.ts))
   detecta las peticiones obvias — `infographic`, `image`, `poster`, `draw`, `chart`, y sus
@@ -203,6 +204,76 @@ flowchart LR
 `USE_IMAGE_REFERENCES` y `SAVE_GENERATED_IMAGES`, lo que mantiene honesta la forma del grafo en
 Studio.
 
+### La búsqueda se deriva, no se sortea
+
+`detectFreshness` busca una señal de actualidad — `today`, `right now`, `latest`,
+`main headlines`, `top stories`, `this week`, `recent`, una fecha explícita como `September 11`,
+además de los equivalentes en español y portugués — y devuelve `day`, `week` o `none`. Eso decide
+cómo busca Tavily durante toda la ejecución:
+
+- `day` / `week` → `topic=news` con el `timeRange` correspondiente. Los resultados traen
+  `published_date`, que es lo que permite al redactor distinguir la cobertura de esta mañana de
+  la de anoche.
+- `none` → `topic=general`, con el refuerzo de `country` derivado de `OUTPUT_LANGUAGE`.
+
+**Antes esos eran campos que el modelo de investigación rellenaba.** El esquema del propio
+`TavilySearch` pide `topic`, `timeRange`, `searchDepth` y los filtros de dominio, así que lo bien
+que se investigaba una pregunta dependía de cuáles de ellos el modelo definía por casualidad. La
+misma pregunta, con minutos de diferencia, una vez hizo una búsqueda general sin fecha y leyó dos
+portadas de portales de noticias, y otra vez hizo `topic=news, timeRange=day` y leyó artículos
+fechados — la segunda respuesta era visiblemente mejor, y nada en la pregunta decidía cuál de las
+dos recibías. Ahora [src/ai/tools/tavily.ts](src/ai/tools/tavily.ts) envuelve ambas herramientas
+en un esquema que solo acepta la query y deriva el resto.
+
+Dos consecuencias que vale conocer:
+
+- Tavily aplica `country` **solo** en el tema `general`, así que la vía de noticias añade el
+  nombre del país al texto de la query. Es la única compensación que ofrece la API. Con el
+  predeterminado `en` no hay región y, por tanto, nada que perder de ninguna manera.
+- En la vía de actualidad, `web_extract` **rechaza una portada o índice de sección** (un host
+  simple, `/news`, `/latest-news`, `/ultimas-noticias`) y explica por qué, porque una página así
+  trae titulares sueltos y ningún cuerpo de artículo al que atribuir algo. Fuera de esa vía la
+  raíz de un sitio sigue siendo válida — "resúmeme esta página" es una petición legítima.
+
+La fecha de hoy se indica en el mensaje de investigación en lugar de consultarse:
+`get_current_datetime` era el paso uno del prompt y el modelo lo seguía más o menos la mitad de
+las veces. La herramienta sigue ahí para aritmética con fechas.
+
+### Las fuentes quedan ligadas a las afirmaciones
+
+Los resultados de las herramientas llegaban a las etapas de escritura como un bloque único por
+llamada — la respuesta de Tavily, serializada, recortada a un presupuesto de caracteres. Una
+respuesta de búsqueda con cinco resultados sobrevivía como el primer resultado y medio, así que
+títulos, URLs y cuerpos llegaban separados unos de otros — y un redactor que ve frases sueltas sin
+dueño las vuelve a armar por plausibilidad. Así es como una acción termina atribuida a quien fue
+mencionado cerca en vez de a quien la realizó.
+
+Ahora [src/ai/lib/sources.ts](src/ai/lib/sources.ts) convierte los payloads en registros:
+
+```
+[S1] Supreme court opens inquiry into film funding
+(example.com — published 2026-09-11)
+The reporting justice authorised the inquiry on Thursday…
+```
+
+Un bloque por fuente, deduplicado por URL, con el cuerpo extraído sustituyendo el fragmento de la
+búsqueda para la misma página y con el título y la fecha conservados de cualquiera de los dos. El
+prompt de respuesta exige entonces que cada línea de dato termine con su etiqueta, y prohíbe
+escribir un nombre y una acción juntos a menos que el texto de una fuente los ponga juntos.
+
+`bindSources` resuelve esas etiquetas después: el bloque de fuentes se construye a partir de las
+etiquetas que la respuesta realmente usó, en orden de uso, y las etiquetas se quitan de lo que el
+lector ve. Así la lista de enlaces describe aquello en lo que se apoya la respuesta, y no todo lo
+que la ejecución buscó — y una etiqueta que no resuelve a nada es una afirmación sin fuente
+alguna, registrada como `answer cited a source that was never retrieved`. No interviene ninguna
+llamada extra al modelo.
+
+La palabra del encabezado sobre los enlaces sigue viniendo del modelo, en el idioma que indique
+`OUTPUT_LANGUAGE`, para que una respuesta en un idioma que nadie fijó aquí no acabe con un
+"Sources:" en inglés. Si el redactor ignora del todo la regla de las etiquetas, se usan las
+fuentes principales como respaldo: una respuesta con fuentes imprecisas es mejor que una sin
+fuente.
+
 ### Formato de la respuesta
 
 Las respuestas en texto vienen en dos formas, y la **predeterminada es una lista de temas
@@ -219,6 +290,10 @@ Ambos presupuestos (`ANSWER_LIMITS` en
 bloque final de fuentes — hasta cinco URLs simples — se separa, queda fuera del presupuesto y se
 vuelve a adjuntar después, de modo que recortar una respuesta larga elimina el tema más débil en
 lugar de las fuentes.
+
+`DIGEST_BUDGETS` es la otra mitad de eso: la etapa de respuesta ve ocho bloques de fuente de 700
+caracteres cada uno, donde antes veía cuatro bloques de herramienta recortados a 900. Un
+presupuesto de respuesta que no puede llenarse con material real es una invitación a inventarlo.
 
 Toda respuesta en texto pasa luego por `toWhatsAppText`
 ([src/ai/lib/whatsappText.ts](src/ai/lib/whatsappText.ts)), que reescribe el markdown que el
@@ -379,6 +454,7 @@ Se lee de `.env`; consulta [.env.example](.env.example) para la lista completa c
 | `IMAGE_REFERENCE_COUNT` | `2` | Cuántas URLs de foto pasar al modelo de imagen |
 | `OPENROUTER_API_KEY` | — | **Obligatoria** para la generación |
 | `TAVILY_API_KEY` | — | **Obligatoria** para la búsqueda web |
+| `SEARCH_DEPTH` | `advanced` | `basic` o `advanced`. El principal factor de coste en Tavily — ver abajo |
 | `CHAT_MODEL` | `deepseek/deepseek-v4-flash-0731` | Slug de chat de OpenRouter |
 | `IMAGE_MODEL` | `bytedance-seed/seedream-4.5` | Slug de imagen de OpenRouter |
 | `IMAGE_ASPECT_RATIO` | `9:16` | Vertical por defecto |
@@ -388,6 +464,13 @@ Se lee de `.env`; consulta [.env.example](.env.example) para la lista completa c
 
 WhatsApp puede vincularse sin las claves de IA. La primera petición `@bot` sin ellas falla con una
 respuesta de error de investigación y una línea clara en el registro.
+
+Merece una segunda mirada `SEARCH_DEPTH` si los créditos de Tavily te importan. Tavily cobra por
+profundidad, no por cantidad de resultados, así que `advanced` cuesta más por búsqueda y es el
+único ajuste de búsqueda que cambia el coste de una ejecución. Es el predeterminado porque los
+fragmentos son la base de la atribución de una respuesta: en `basic` un resultado llega como dos
+o tres frases, suficiente para saber que un hecho existe e insuficiente para saber quién actuó en
+él. Usa `basic` para reducir ese coste a la mitad a cambio de evidencia más delgada.
 
 Webhook de notificaciones (todo opcional, todo inerte mientras `NOTIFY_ENABLED=false`):
 
@@ -436,12 +519,13 @@ src/
     graph/
       graph.ts                  cableado del StateGraph, enrutamiento, runAssistant()
       state.ts                  AssistantState (StateSchema)
-      intent.ts                 pasada gratuita por palabras clave de intención de imagen
+      intent.ts                 pasadas por palabras clave: imagen, profundidad, actualidad
       studio.ts                 punto de entrada de LangGraph Studio
       nodes/                    un archivo por nodo, servicios inyectados
     services/                   LLMService, ImageService
     infographic/                esquema Zod del brief + constructor del prompt de imagen
-    tools/                      datetime + búsqueda/extracción de Tavily
+    tools/                      datetime + Tavily, ajustes derivados de la actualidad
+    lib/sources.ts              registros de fuente, etiquetado, vínculo de citas
     lib/imageStore.ts           persistencia opcional en disco
 ```
 

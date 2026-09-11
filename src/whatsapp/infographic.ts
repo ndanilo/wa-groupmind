@@ -192,7 +192,14 @@ async function runRequest(
             chat: jid,
             chars: run.answer.length,
             depth: run.depth,
+            freshness: run.freshness,
             sources: run.sources.length,
+            // How many of those the answer actually leaned on. A wide gap between the two
+            // means the run retrieved a lot and used little, which is what a shallow
+            // answer looks like from outside.
+            cited: run.citedSources.length,
+            newestSource: run.newestSource,
+            oldestSource: run.oldestSource,
             truncated: run.truncated,
             intentSource: run.intentSource,
           },

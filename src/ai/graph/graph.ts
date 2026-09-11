@@ -96,9 +96,16 @@ export type AssistantGraph = ReturnType<typeof createAssistantGraph>
 export type AssistantRun = {
   mode: 'text' | 'image'
   depth: 'topics' | 'detailed'
+  freshness: 'day' | 'week' | 'none'
   question: string
   answer: string
+  /** Every citable URL the run retrieved. */
   sources: string[]
+  /** The subset the answer cited, which is what the reader was linked to. */
+  citedSources: string[]
+  /** Publication dates at either end of what was retrieved, when Tavily gave them. */
+  newestSource?: string
+  oldestSource?: string
   truncated: boolean
   intentSource: 'keyword' | 'llm'
   brief?: AssistantStateType['brief']
@@ -178,9 +185,13 @@ export async function runAssistant(
   return {
     mode: state.mode ?? 'text',
     depth: state.depth ?? 'topics',
+    freshness: state.freshness ?? 'none',
     question,
     answer: state.answer ?? '',
     sources: state.sources ?? [],
+    citedSources: state.citedSources ?? [],
+    newestSource: state.newestSource,
+    oldestSource: state.oldestSource,
     truncated: state.truncated ?? false,
     intentSource: state.intentSource ?? 'keyword',
     brief: state.brief,

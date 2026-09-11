@@ -30,6 +30,8 @@ export type TavilyConfigType = {
   apiKey: string
   maxResults: number
   searchDepth: 'basic' | 'advanced'
+  /** Snippet chunks per result. Tavily only honours it on the advanced depth. */
+  chunksPerSource: number
   extractDepth: 'basic' | 'advanced'
   format: 'markdown' | 'text'
   /** Full lowercase country name Tavily boosts results from, e.g. "brazil". */
@@ -76,7 +78,13 @@ export function getChatConfig(): ChatConfig {
     answerTemperature: 0.2,
     classifierTemperature: 0,
     recursionLimit: 30,
-    maxToolCallsPerRun: 8,
+    /*
+    Two searches and two extracts, which is what RESEARCH_PROMPT asks for, plus one call of
+    slack. It was 8 against a prompt asking for 4, and the model split the difference
+    differently every run — two tool calls on one pass, five on the next, for the same
+    question. A limit that matches the instruction is one fewer thing left to sampling.
+    */
+    maxToolCallsPerRun: 5,
     requestTimeoutMs: config.chatRequestTimeoutMs,
     maxRetries: config.chatMaxRetries,
   }
@@ -103,8 +111,10 @@ export function getTavilyConfig(): TavilyConfigType {
   const { tavilyApiKey } = keys()
   tavily = {
     apiKey: tavilyApiKey,
-    maxResults: 5,
-    searchDepth: 'basic',
+    maxResults: 8,
+    searchDepth: config.searchDepth,
+    // Tavily ignores this unless searchDepth is advanced, which is why it is not gated too.
+    chunksPerSource: 3,
     extractDepth: 'basic',
     format: 'markdown',
     country: searchCountry(config.outputLanguage),

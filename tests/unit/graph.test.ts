@@ -41,14 +41,35 @@ const sampleBrief = (): InfographicBrief => ({
   takeaway: 'Juros altos seguem enquanto a inflação não ceder.',
 })
 
+/*
+Shaped like a real Tavily search payload, because the node under test parses it: the digest
+turns tool results into source records, so a plain sentence here would produce a run with no
+sources at all and hide exactly what these tests are checking.
+*/
 const researchMessages = () => [
   new ToolMessage({
-    content: 'Selic a 14,00% a.a. Fonte: https://bcb.gov.br/selic',
+    content: JSON.stringify({
+      query: 'taxa selic atual',
+      results: [
+        {
+          title: 'Copom mantem a Selic em 14,00% ao ano',
+          url: 'https://bcb.gov.br/selic',
+          content: 'O Copom manteve a taxa Selic em 14,00% ao ano na reuniao de agosto de 2026.',
+          score: 0.94,
+          published_date: '2026-08-06',
+        },
+      ],
+    }),
     tool_call_id: 'call_1',
     name: 'web_search',
   }),
   new AIMessage('A Selic esta em 14,00% ao ano, definida pelo Copom em agosto de 2026.'),
 ]
+
+type AnswerOptions = {
+  research?: unknown
+  depth?: string
+}
 
 type Calls = {
   classify: number
@@ -58,6 +79,8 @@ type Calls = {
   image: number
   /** Depth the answer stage was actually asked for. */
   depth: string
+  /** Freshness the research stage was actually asked for. */
+  freshness: string
 }
 
 function fakes(intent: Intent) {
@@ -68,6 +91,7 @@ function fakes(intent: Intent) {
     brief: 0,
     image: 0,
     depth: '',
+    freshness: '',
   }
 
   const llm = {
@@ -75,18 +99,17 @@ function fakes(intent: Intent) {
       calls.classify += 1
       return normaliseIntent(intent)
     },
-    async makeAIRequestAsync() {
+    async makeAIRequestAsync(request?: { freshness?: string }) {
       calls.research += 1
+      calls.freshness = request?.freshness ?? 'none'
       return { messages: researchMessages(), truncated: false }
     },
-    async writeChatAnswerAsync(
-      _question: string,
-      research?: unknown,
-      depth?: string,
-    ): Promise<string> {
+    async writeChatAnswerAsync(_question: string, options?: AnswerOptions) {
       calls.answer += 1
-      calls.depth = depth ?? 'topics'
-      return research ? 'A Selic esta em *14,00% a.a.*' : 'Oi! Tudo bem por aqui.'
+      calls.depth = options?.depth ?? 'topics'
+      return options?.research
+        ? { text: 'A Selic esta em *14,00% a.a.*', cited: ['https://bcb.gov.br/selic'] }
+        : { text: 'Oi! Tudo bem por aqui.', cited: [] }
     },
     async writeInfographicBriefAsync(): Promise<InfographicBrief> {
       calls.brief += 1
@@ -143,6 +166,11 @@ describe('assistant graph routing', () => {
     assert.equal(calls.image, 0)
     assert.ok(run.answer.includes('14,00%'))
     assert.deepEqual(run.sources, ['https://bcb.gov.br/selic'])
+    assert.deepEqual(run.citedSources, ['https://bcb.gov.br/selic'])
+    // Carried through from the payload's published_date, which is what makes "this is from
+    // last night" visible in the log instead of only in the reply.
+    assert.equal(run.newestSource, '2026-08-06')
+    assert.equal(run.oldestSource, '2026-08-06')
   })
 
   it('runs the full image branch when an infographic is asked for', async () => {
@@ -227,6 +255,27 @@ describe('assistant graph routing', () => {
     assert.equal(calls.depth, 'detailed')
   })
 
+  it('carries a recency ask through to the research stage', async () => {
+    const { llm, images, calls } = fakes({ mode: 'text', needsResearch: true })
+    const graph = createAssistantGraph({ llm, images })
+
+    const run = await runAssistant(graph, 'what are the main headlines today', { onStage })
+
+    assert.equal(run.freshness, 'day')
+    // The research stage is where it has to land: it decides Tavily's topic and time range.
+    assert.equal(calls.freshness, 'day')
+  })
+
+  it('leaves a timeless question unconstrained', async () => {
+    const { llm, images, calls } = fakes({ mode: 'text', needsResearch: true })
+    const graph = createAssistantGraph({ llm, images })
+
+    const run = await runAssistant(graph, 'what is the capital of Australia?', { onStage })
+
+    assert.equal(run.freshness, 'none')
+    assert.equal(calls.freshness, 'none')
+  })
+
   it('falls back to researched text when the classifier throws', async () => {
     const { images } = fakes({ mode: 'text', needsResearch: true })
     let researched = 0
@@ -239,8 +288,8 @@ describe('assistant graph routing', () => {
         researched += 1
         return { messages: researchMessages(), truncated: false }
       },
-      async writeChatAnswerAsync(): Promise<string> {
-        return 'Resposta com pesquisa.'
+      async writeChatAnswerAsync() {
+        return { text: 'Resposta com pesquisa.', cited: [] }
       },
     } as unknown as LLMService
 

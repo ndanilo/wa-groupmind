@@ -1,7 +1,11 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { detectAnswerDepth, detectImageIntent } from '../../src/ai/graph/intent.js'
+import {
+  detectAnswerDepth,
+  detectFreshness,
+  detectImageIntent,
+} from '../../src/ai/graph/intent.js'
 
 describe('detectImageIntent', () => {
   it('detects explicit Portuguese image asks', () => {
@@ -87,5 +91,70 @@ describe('detectAnswerDepth', () => {
 
   it('returns undefined for empty input', () => {
     assert.equal(detectAnswerDepth('   '), undefined)
+  })
+})
+
+describe('detectFreshness', () => {
+  it('detects an explicit ask for today in English', () => {
+    assert.equal(detectFreshness('what happened today'), 'day')
+    assert.equal(detectFreshness('where is the dollar right now'), 'day')
+    assert.equal(detectFreshness('what is the latest on the strike'), 'day')
+    assert.equal(detectFreshness('any breaking news'), 'day')
+    assert.equal(detectFreshness('what did I miss this morning'), 'day')
+  })
+
+  it('treats a news digest as a question about today', () => {
+    // The wording that started this: no time word, but a ranking over the day's reporting.
+    assert.equal(detectFreshness('what are the main headlines'), 'day')
+    assert.equal(detectFreshness('give me the top stories'), 'day')
+    assert.equal(detectFreshness('the biggest news please'), 'day')
+    assert.equal(detectFreshness('the most important news'), 'day')
+    assert.equal(detectFreshness('headlines of the day'), 'day')
+  })
+
+  it('works in Spanish and Portuguese', () => {
+    assert.equal(detectFreshness('que paso hoy'), 'day')
+    assert.equal(detectFreshness('quais as principais noticias'), 'day')
+    assert.equal(detectFreshness('cuales son las principales noticias'), 'day')
+    assert.equal(detectFreshness('me da as ultimas noticias'), 'day')
+    assert.equal(detectFreshness('ultima hora por favor'), 'day')
+    assert.equal(detectFreshness('como esta o dolar agora'), 'day')
+  })
+
+  it('reads an explicit calendar date as that day', () => {
+    assert.equal(detectFreshness('what happened on September 11'), 'day')
+    assert.equal(detectFreshness('o que rolou no dia 11 de setembro'), 'day')
+  })
+
+  it('does not mistake a stemmed month for a date', () => {
+    // A bare `mar[a-z]*` or `dec[a-z]*` turned both of these into recency asks.
+    assert.equal(detectFreshness('is the market 5 percent down'), undefined)
+    assert.equal(detectFreshness('what is in decision 3 of the board'), undefined)
+  })
+
+  it('widens to a week when the question spans days', () => {
+    assert.equal(detectFreshness('what happened this week'), 'week')
+    assert.equal(detectFreshness('a summary of last week'), 'week')
+    assert.equal(detectFreshness('anything in the past few days'), 'week')
+    assert.equal(detectFreshness('what are the recent cases'), 'week')
+    assert.equal(detectFreshness('resumo da semana passada'), 'week')
+    assert.equal(detectFreshness('resumen de la semana pasada'), 'week')
+  })
+
+  it('prefers the day when a question carries both signals', () => {
+    assert.equal(detectFreshness('the most important recent news today'), 'day')
+  })
+
+  it('leaves a timeless question unconstrained', () => {
+    assert.equal(detectFreshness('what are the best series of 2026?'), undefined)
+    assert.equal(detectFreshness('what is the capital of Australia'), undefined)
+    assert.equal(detectFreshness('translate "hello world" into Portuguese'), undefined)
+    // An importance word not attached to news is about a document, not about the day.
+    assert.equal(detectFreshness('the most important points in this contract'), undefined)
+    assert.equal(detectFreshness('hi, how are you?'), undefined)
+  })
+
+  it('returns undefined for empty input', () => {
+    assert.equal(detectFreshness('   '), undefined)
   })
 })

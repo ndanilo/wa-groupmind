@@ -19,10 +19,18 @@ export const AssistantState = new StateSchema({
   needsResearch: z.boolean().default(true),
   /** topics = scannable bold headlines (default). detailed = prose, only when asked. */
   depth: z.enum(['topics', 'detailed']).default('topics'),
+  /** How recent the sources must be. Sets Tavily's topic and time range for the run. */
+  freshness: z.enum(['day', 'week', 'none']).default('none'),
   intentSource: z.enum(['keyword', 'llm']).default('keyword'),
   researchMessages: z.array(z.custom<BaseMessage>()).default(() => []),
   truncated: z.boolean().default(false),
+  /** Every citable URL the run retrieved. */
   sources: z.array(z.string()).default(() => []),
+  /** The subset the answer actually cited, which is what the reader gets linked to. */
+  citedSources: z.array(z.string()).default(() => []),
+  /** Publication dates of the freshest and oldest source, when Tavily supplied them. */
+  newestSource: z.string().optional(),
+  oldestSource: z.string().optional(),
   answer: z.string().default(''),
   brief: z.custom<InfographicBrief>().optional(),
   imagePrompt: z.string().default(''),

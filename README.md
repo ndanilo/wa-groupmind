@@ -178,7 +178,8 @@ flowchart LR
     writeAnswer --> done
 ```
 
-`classify` decides two things: **mode** (`text` or `image`) and **needsResearch**.
+`classify` decides four things: **mode** (`text` or `image`), **needsResearch**, **depth** and
+**freshness**.
 
 - A free keyword pass ([src/ai/graph/intent.ts](src/ai/graph/intent.ts)) catches the obvious
   asks — `infographic`, `image`, `poster`, `draw`, `chart`, and their Portuguese equivalents.
@@ -191,6 +192,73 @@ flowchart LR
 
 `styleRefs` and `persist` are plain nodes that no-op internally on `USE_IMAGE_REFERENCES` and
 `SAVE_GENERATED_IMAGES`, which keeps the graph shape honest in Studio.
+
+### Retrieval is derived, not sampled
+
+`detectFreshness` looks for a recency signal — `today`, `right now`, `latest`, `main headlines`,
+`top stories`, `this week`, `recent`, an explicit `September 11`, plus the Spanish and
+Portuguese equivalents — and returns `day`, `week` or `none`. That decides how Tavily retrieves
+for the whole run:
+
+- `day` / `week` → `topic=news` with `timeRange` to match. Results carry `published_date`, which
+  is what lets the writer tell this morning's reporting from last night's.
+- `none` → `topic=general`, with the `country` boost derived from `OUTPUT_LANGUAGE`.
+
+**These used to be fields the research model filled in.** `TavilySearch`'s own schema asks for
+`topic`, `timeRange`, `searchDepth` and the domain filters, so how well a question got
+researched came down to which of them the model happened to set. The same question, minutes
+apart, once ran an undated general search and read two news front pages, and once ran
+`topic=news, timeRange=day` and read dated articles — the second answer was visibly better, and
+nothing about the question decided which one you got.
+[src/ai/tools/tavily.ts](src/ai/tools/tavily.ts) now wraps both tools in a query-only schema and
+derives the rest.
+
+Two consequences worth knowing:
+
+- Tavily applies `country` **only** on the `general` topic, so the news path appends the country
+  name to the query text instead. That is the only compensation the API offers. With the default
+  `en` there is no region and so nothing to lose either way.
+- On the recency path, `web_extract` **refuses a front page or section index** (a bare host,
+  `/news`, `/latest-news`, `/ultimas-noticias`) and says why, because such a page carries
+  headline teasers and no attributable article body. Off that path a site root is still fair
+  game — "summarise this page for me" is a legitimate ask.
+
+Today's date is stated in the research message rather than fetched: `get_current_datetime` was
+step one of the prompt and the model followed it about half the time. The tool is still there
+for arithmetic on dates.
+
+### Sources are bound to claims
+
+The research loop's tool results used to reach the writing stages as one stringified Tavily
+response per call, clipped to a character budget. A search response holding five results
+survived as roughly the first result and a half, so titles, URLs and bodies arrived separated
+from each other — and a writer shown floating sentences with no owner reassembles them by
+plausibility. That is how an action ends up credited to whoever was named nearby rather than to
+whoever took it.
+
+[src/ai/lib/sources.ts](src/ai/lib/sources.ts) parses the payloads into records instead:
+
+```
+[S1] Supreme court opens inquiry into film funding
+(example.com — published 2026-09-11)
+The reporting justice authorised the inquiry on Thursday…
+```
+
+One block per source, deduplicated by URL, with an extracted body replacing the search snippet
+for the same page and its title and date kept from whichever hit carried them. The answer prompt
+then requires each fact line to end with its tag, and forbids writing a name and an action
+together unless one source's text puts them together.
+
+`bindSources` resolves those tags afterwards: the sources block is built from the tags the answer
+actually used, in order of use, and the tags are stripped from what the reader sees. So the link
+list describes what the answer rests on rather than everything the run searched — and a tag that
+resolves to nothing is a claim with no source behind it, logged as `answer cited a source that
+was never retrieved`. No extra model call is involved.
+
+The header word above the links still comes from the model, in whatever `OUTPUT_LANGUAGE` says,
+so a reply in a language nobody here hardcoded does not end in an English "Sources:". If the
+writer ignores the tagging rule entirely, the top sources are used as a fallback: an imprecisely
+sourced answer beats an unsourced one.
 
 ### Answer format
 
@@ -207,6 +275,10 @@ Both budgets (`ANSWER_LIMITS` in [src/ai/services/LLMService.ts](src/ai/services
 cover the **body only**. The trailing sources block — up to five bare URLs — is split off, kept
 out of the budget and re-attached afterwards, so trimming a long answer drops the weakest topic
 instead of the sources.
+
+`DIGEST_BUDGETS` is the other half of that: the answer stage sees eight source blocks at 700
+characters each, where it used to see four clipped tool blobs at 900. A reply budget that cannot
+be filled with real material is an invitation to invent some.
 
 Every text reply then goes through `toWhatsAppText`
 ([src/ai/lib/whatsappText.ts](src/ai/lib/whatsappText.ts)), which rewrites whatever markdown the
@@ -363,6 +435,7 @@ Read from `.env`; see [.env.example](.env.example) for the full commented list.
 | `IMAGE_REFERENCE_COUNT` | `2` | How many photo URLs to pass to the image model |
 | `OPENROUTER_API_KEY` | — | **Required** for generation |
 | `TAVILY_API_KEY` | — | **Required** for web search |
+| `SEARCH_DEPTH` | `advanced` | `basic` or `advanced`. The main Tavily cost driver — see below |
 | `CHAT_MODEL` | `deepseek/deepseek-v4-flash-0731` | OpenRouter chat slug |
 | `IMAGE_MODEL` | `bytedance-seed/seedream-4.5` | OpenRouter image slug |
 | `IMAGE_ASPECT_RATIO` | `9:16` | Portrait by default |
@@ -372,6 +445,13 @@ Read from `.env`; see [.env.example](.env.example) for the full commented list.
 
 WhatsApp can still pair without the AI keys. The first `@bot` request without them fails with a
 research error reply and a clear log line.
+
+`SEARCH_DEPTH` is worth a second look if Tavily credits matter to you. Tavily bills by depth
+rather than by result count, so `advanced` costs more per search than `basic` and it is the one
+search setting that changes what a run costs. It is on by default because the snippets are what
+an answer gets attributed from: on `basic` a result comes back as a couple of sentences, which is
+enough to know a story exists and not enough to know who acted in it. Set it to `basic` to halve
+that cost at the price of thinner evidence.
 
 Notification webhook (all optional, all inert while `NOTIFY_ENABLED=false`):
 
@@ -420,12 +500,13 @@ src/
     graph/
       graph.ts                  StateGraph wiring, routing, runAssistant()
       state.ts                  AssistantState (StateSchema)
-      intent.ts                 free keyword pass for image intent
+      intent.ts                 free keyword passes: image intent, depth, freshness
       studio.ts                 LangGraph Studio entry point
       nodes/                    one file per node, services injected
     services/                   LLMService, ImageService
     infographic/                Zod brief schema + image prompt builder
-    tools/                      datetime + Tavily search/extract
+    tools/                      datetime + Tavily, retrieval settings from freshness
+    lib/sources.ts              source records, tagging, citation binding
     lib/imageStore.ts           optional disk persistence
 ```
 

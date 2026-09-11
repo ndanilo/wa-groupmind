@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { AIMessage, ToolMessage } from '@langchain/core/messages'
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 
 /*
 capAnswer is tested directly because the graph tests fake the answer stage, so the bug it
@@ -12,7 +14,7 @@ module load. Nothing here touches the network.
 process.env.OPENROUTER_API_KEY ??= 'test-openrouter-key'
 process.env.TAVILY_API_KEY ??= 'test-tavily-key'
 
-const { capAnswer } = await import('../../src/ai/services/LLMService.js')
+const { capAnswer, LLMService } = await import('../../src/ai/services/LLMService.js')
 
 const LIMIT = 1500
 
@@ -109,5 +111,89 @@ describe('capAnswer', () => {
     const capped = capAnswer(`Sources:\n${SOURCES[0]}`, LIMIT)
 
     assert.equal(capped, `Sources:\n${SOURCES[0]}`)
+  })
+})
+
+/*
+The answer stage end to end with a faked presenter, because the citation block is now built
+from the tags the writer used rather than copied out of the notes. The header word still has
+to come from the model: OUTPUT_LANGUAGE accepts any BCP-47 tag, so a hardcoded word would
+put "Sources:" under a reply written in German.
+*/
+const FIRST = 'https://example.com/one'
+const SECOND = 'https://example.org/two'
+const THIRD = 'https://example.net/three'
+
+const research = () => ({
+  messages: [
+    new ToolMessage({
+      content: JSON.stringify({
+        results: [
+          { title: 'First', url: FIRST, content: 'The agency opened the case.' },
+          { title: 'Second', url: SECOND, content: 'The committee put off the vote.' },
+          { title: 'Third', url: THIRD, content: 'The rate held at 4.5 percent.' },
+        ],
+      }),
+      tool_call_id: 'call_1',
+      name: 'web_search',
+    }),
+    new AIMessage('Notes about the case, the vote and the rate.'),
+  ],
+  truncated: false,
+})
+
+/** A presenter that returns one fixed reply, so only the citation path is under test. */
+const writer = (reply: string) =>
+  new LLMService({
+    tools: [],
+    presenter: { async invoke() { return new AIMessage(reply) } } as unknown as BaseChatModel,
+  })
+
+describe('writeChatAnswerAsync citations', () => {
+  it("keeps the model's own header word and resolves its tags in order of use", async () => {
+    const written = await writer(
+      '*Vote delayed*\nThe committee put off the vote. [S2]\n\n' +
+        '*Case opened*\nThe agency opened the case. [S1]\n\nFuentes:',
+    ).writeChatAnswerAsync('que paso hoy', { research: research() })
+
+    assert.ok(written.text.includes('Fuentes:'), 'kept the Spanish header')
+    assert.ok(!written.text.includes('Sources:'), 'did not hardcode English over it')
+    assert.deepEqual(written.cited, [SECOND, FIRST])
+    // The third source was retrieved and never cited, so it is not in the reply.
+    assert.ok(!written.text.includes(THIRD))
+  })
+
+  it('strips the tags from what the reader sees', async () => {
+    const written = await writer(
+      '*Vote delayed*\nThe committee put off the vote. [S2]\n\nSources:',
+    ).writeChatAnswerAsync('what happened', { research: research() })
+
+    assert.doesNotMatch(written.text, /\[S\d/)
+    assert.ok(written.text.includes('put off the vote.\n'), 'no space left behind the tag')
+  })
+
+  it('falls back to a header when the model wrote none', async () => {
+    const written = await writer(
+      '*Rate holds*\nThe rate held at 4.5 percent. [S3]',
+    ).writeChatAnswerAsync('what is the rate', { research: research() })
+
+    assert.ok(written.text.includes(`Sources:\n${THIRD}`))
+  })
+
+  it('cites the top sources rather than nothing when the writer used no tags', async () => {
+    // An imprecisely sourced answer beats an unsourced one, which is what the old
+    // everything-we-searched list at least guaranteed.
+    const written = await writer(
+      '*Rate holds*\nThe rate held at 4.5 percent.',
+    ).writeChatAnswerAsync('what is the rate', { research: research() })
+
+    assert.deepEqual(written.cited, [FIRST, SECOND, THIRD])
+  })
+
+  it('reports no sources on the no-research path', async () => {
+    const written = await writer('Hi! All good here.').writeChatAnswerAsync('hi, how are you?')
+
+    assert.equal(written.text, 'Hi! All good here.')
+    assert.deepEqual(written.cited, [])
   })
 })
