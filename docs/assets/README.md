@@ -1,7 +1,7 @@
 # Brand and documentation assets
 
-Images referenced by the three READMEs. Filenames are load-bearing — the READMEs link to them
-by relative path, so renaming one breaks all three.
+Images and the demo recording referenced by the three READMEs. Filenames are load-bearing —
+the READMEs link to them by relative path, so renaming one breaks all three.
 
 ## Inventory
 
@@ -12,6 +12,8 @@ in a clone, so it gets deleted rather than parked.
 | --- | --- | --- | --- |
 | `logo.png` | PNG, transparent | 512x512 | Header of all three READMEs, rendered at 140px |
 | `hero.jpg` | JPEG | 1600x893 | Banner under the title in all three READMEs |
+| `ai-bot-demo.mp4` | H.264 | 1762x970, 44s | "What it does" — inline `<video>` of a real run |
+| `ai-bot-demo.jpg` | JPEG | 1200x661 | `poster` frame for the recording (first-frame fallback) |
 | `demo-answer.jpg` | JPEG | 1200x896 | "What it does" — the core ask-and-answer loop |
 | `demo-infographic.jpg` | JPEG | 1200x896 | "Answer format" — a poster arriving in a thread |
 | `demo-poster.jpg` | JPEG | 760x1362 | "Answer format" — a generated poster on its own |
@@ -54,6 +56,16 @@ fine. Looking like WhatsApp is not.
 | Muted text | `#64648B` |
 
 The five `demo-*` mockups are locked to this palette. Changing it means regenerating all of them.
+
+`ai-bot-demo.mp4` is not a mockup. It is a screen recording of a test number and a private
+test group (bot + operator only). Account identifiers in the log pane are masked before the
+file is committed. The mockup rules above do not apply to it; do not restyle or recrop it to
+look like the generated stills.
+
+The READMEs embed it with a relative `<video src="docs/assets/ai-bot-demo.mp4">`. That plays in
+Markdown previews and local HTML. GitHub.com sanitises `<video>` whose `src` is a path in the
+repo; once this file is on `main`, drag it onto an issue or the README editor on github.com to
+get a `user-attachments` URL and put that in `src` if the inline player is empty there.
 
 ## Regenerating
 

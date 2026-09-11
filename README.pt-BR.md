@@ -56,6 +56,14 @@ URLs em que ela se baseou.
 @groupmind faz um infográfico da taxa de juros     -> pôster gerado
 ```
 
+Uma execução real em um número de teste: menção, confirmação e depois a lista de tópicos com
+fontes. Log à esquerda, celular à direita.
+
+<div align="center">
+<video src="docs/assets/ai-bot-demo.mp4" poster="docs/assets/ai-bot-demo.jpg" width="100%" controls playsinline>
+</video>
+</div>
+
 <img src="docs/assets/demo-answer.jpg" alt="Um integrante do grupo marca o bot, chega a confirmação e depois a resposta em tópicos com fontes" width="100%">
 
 ## Stack

@@ -55,6 +55,14 @@ URLs it relied on.
 @groupmind make an infographic about interest rates -> generated poster
 ```
 
+A real run on a test number: mention, acknowledgement, then a sourced topic list. Log on the
+left, phone on the right.
+
+<div align="center">
+<video src="docs/assets/ai-bot-demo.mp4" poster="docs/assets/ai-bot-demo.jpg" width="100%" controls playsinline>
+</video>
+</div>
+
 <img src="docs/assets/demo-answer.jpg" alt="A group member mentions the bot, an acknowledgement arrives, then a sourced topic-list answer" width="100%">
 
 ## Stack

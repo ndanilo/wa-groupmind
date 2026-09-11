@@ -11,7 +11,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs'
 
 const READMES = ['README.md', 'README.pt-BR.md', 'README.es.md']
 const DOCS = [...READMES, 'docs/assets/README.md']
-const REF = /(?:src="|]\()(docs\/assets\/[^")]+)/g
+const REF = /(?:src="|href="|poster="|]\()(docs\/assets\/[^")]+)/g
 
 /**
  * Assets that are legitimately not linked from markdown. GitHub serves the social
@@ -37,7 +37,7 @@ for (const doc of DOCS) {
 }
 
 const orphans = readdirSync('docs/assets')
-  .filter((f) => /\.(png|jpe?g|gif|svg)$/i.test(f))
+  .filter((f) => /\.(png|jpe?g|gif|svg|mp4|webm)$/i.test(f))
   .filter((f) => !referenced.has(f) && !NOT_LINKED.has(f))
 
 for (const f of orphans) {
