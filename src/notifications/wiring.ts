@@ -29,7 +29,7 @@ export type NotificationService = {
   dispatcher: NotificationDispatcher
   /** Where the server bound, for logging. */
   address: string
-  /** Closes HTTP, releases anyone waiting on a reconnect, then drains in-flight sends. */
+  /** Closes HTTP, then drains in-flight sends. */
   stop(): Promise<void>
 }
 
@@ -96,10 +96,13 @@ export async function startNotificationService(gate: SocketGate): Promise<Notifi
     dispatcher,
     address,
     async stop() {
-      // Order matters. Stop accepting first, then release anyone parked waiting for a reconnect
-      // that is no longer coming, and only then wait for the sends still in flight.
+      // Stop accepting before draining, so nothing new joins the queue mid-teardown.
+      //
+      // The gate is deliberately left alone: it is shared with the bot's own replies now, and
+      // releasing it here would strand an infographic that is still waiting to be sent. The
+      // connection owns it and stops it last. Parked deliveries are bounded by
+      // NOTIFY_READY_TIMEOUT_MS regardless, so this cannot hang.
       await app.close()
-      gate.stop()
       await dispatcher.drain()
     },
   }

@@ -20,18 +20,20 @@ const GROUP = '120363000000000000@g.us'
 
 const message = { key: { remoteJid: GROUP, id: 'ABC123' } } as unknown as WAMessage
 
-/** Records what was sent, or throws on demand. */
-function fakeSocket(failWith?: Error) {
+/** Records what was sent. The first `failures` sends throw, so a retry can be observed. */
+function fakeSocket(failWith?: Error, failures = Number.POSITIVE_INFINITY) {
   const sent: Array<{ jid: string; text: string }> = []
+  let attempts = 0
   const sock = {
     async sendMessage(jid: string, content: { text?: string }) {
-      if (failWith) throw failWith
+      attempts += 1
+      if (failWith && attempts <= failures) throw failWith
       sent.push({ jid, text: content.text ?? '' })
       return undefined
     },
   } as unknown as WASocket
 
-  return { sent, sock }
+  return { sent, sock, attempts: () => attempts }
 }
 
 describe('sendAck', () => {
@@ -51,6 +53,18 @@ describe('sendAck', () => {
     await sendAck(sock, GROUP, message, true)
 
     assert.match(sent[0]?.text ?? '', /infographic/)
+  })
+
+  it('retries a blip rather than dropping the ack', async () => {
+    const { sent, sock, attempts } = fakeSocket(new Error('connection closed'), 1)
+
+    await sendAck(sock, GROUP, message)
+
+    // The ack used to get a single attempt while the answer behind it got three, so a blip
+    // lost the ack and kept the answer -- exactly the "no ack, then a reply" the group saw.
+    assert.equal(attempts(), 2)
+    assert.equal(sent.length, 1)
+    assert.match(sent[0]?.text ?? '', /Looking that up/)
   })
 
   it('never lets a failed ack take the answer down with it', async () => {

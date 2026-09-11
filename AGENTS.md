@@ -17,7 +17,7 @@ Windows PowerShell: chain with `;`, not `&&`. Node 24 (`.nvmrc`); CI also runs 2
 ```powershell
 npm run dev        # watch mode
 npm run typecheck  # tsc --noEmit
-npm test           # node:test, 186 tests, no network
+npm test           # node:test, 194 tests, no network
 npm run build      # emit to dist/
 ```
 

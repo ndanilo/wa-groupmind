@@ -5,10 +5,10 @@ import { WhatsAppConnection } from './whatsapp/connection.js'
 import { SocketGate } from './whatsapp/socketGate.js'
 import type { NotificationService } from './notifications/wiring.js'
 
-const runtime = createInfographicRuntime()
+// Always built, webhook or not: the bot's own replies outlive the socket they were asked on.
+const gate = new SocketGate()
 
-// Only built when the webhook is on, so the default path is exactly what it always was.
-const gate = config.notifyEnabled ? new SocketGate() : undefined
+const runtime = createInfographicRuntime(gate)
 
 const connection = new WhatsAppConnection((error) => {
   logger.error({ error: error.message }, 'shutting down')
@@ -43,7 +43,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 
 // Imported dynamically so Fastify is never even loaded unless the webhook is enabled.
-if (gate) {
+if (config.notifyEnabled) {
   const { startNotificationService } = await import('./notifications/wiring.js')
   try {
     notifications = await startNotificationService(gate)

@@ -30,6 +30,7 @@ import {
   startTyping,
   type ErrorKind,
 } from './reply.js'
+import type { SocketGate } from './socketGate.js'
 
 const log = logger.child({ module: 'infographic' })
 
@@ -41,16 +42,27 @@ const log = logger.child({ module: 'infographic' })
  */
 const PROGRESS_AFTER_MS = 90_000
 
+/**
+ * How long a reply waits for a reconnecting socket before giving up.
+ *
+ * Generous, because the alternative is throwing away a run that has already been paid for:
+ * Baileys is usually back in seconds, and a question that took two minutes to research can
+ * afford one more.
+ */
+const REPLY_READY_TIMEOUT_MS = 30_000
+
 export type InfographicRuntime = {
   graph: AssistantGraph
   admission: AdmissionControl
+  /** Publishes whichever socket is live now. Replies ask it per send rather than holding one. */
+  gate: SocketGate
   /** Refreshed on every reconnect via setSelf(). */
   self: Set<string>
   setSelf(ids: Set<string>): void
   drain(): Promise<void>
 }
 
-export function createInfographicRuntime(): InfographicRuntime {
+export function createInfographicRuntime(gate: SocketGate): InfographicRuntime {
   const queue = new TaskQueue({
     concurrency: config.infographicConcurrency,
     maxQueued: config.infographicMaxQueued,
@@ -74,6 +86,7 @@ export function createInfographicRuntime(): InfographicRuntime {
       return getGraph()
     },
     admission,
+    gate,
     get self() {
       return self
     },
@@ -141,11 +154,10 @@ export async function handleInfographicMessage(
     return
   }
 
-  await runRequest(sock, runtime, result.request)
+  await runRequest(runtime, result.request)
 }
 
 async function runRequest(
-  sock: WASocket,
   runtime: InfographicRuntime,
   request: InfographicRequest,
 ): Promise<void> {
@@ -154,12 +166,31 @@ async function runRequest(
   const expectsImage = detectImageIntent(question) === 'image'
   log.info({ chat: jid, requester, question, expectsImage }, 'request received')
 
+  /*
+  Resolved per send, never captured.
+
+  Baileys builds a whole new socket on every reconnect, and a run can span minutes — so the
+  socket the question arrived on is routinely dead by the time there is an answer to send.
+  A dead socket fails every attempt inside sendWithRetry, including the one carrying the error
+  reply, which is how a run that did all of its research ends in total silence.
+  */
+  const live = () => runtime.gate.waitForReady(REPLY_READY_TIMEOUT_MS)
+
   let stopTyping: (() => void) | undefined
   let progressTimer: NodeJS.Timeout | undefined
   const cancelProgress = () => {
     if (progressTimer === undefined) return
     clearTimeout(progressTimer)
     progressTimer = undefined
+  }
+
+  /** Best effort by definition: a missing socket must not disturb the run behind it. */
+  const notifySlowResearch = async () => {
+    try {
+      await sendProgress(await live(), jid, message)
+    } catch (error: unknown) {
+      log.debug({ chat: jid, ...errorFields(error) }, 'progress notice skipped')
+    }
   }
 
   try {
@@ -175,7 +206,7 @@ async function runRequest(
               if (node !== 'research') return
               progressTimer = setTimeout(() => {
                 progressTimer = undefined
-                void sendProgress(sock, jid, message)
+                void notifySlowResearch()
               }, PROGRESS_AFTER_MS)
             },
             onStage: (node, elapsedMs) => {
@@ -193,7 +224,7 @@ async function runRequest(
           // Logged before the send so a stalled WhatsApp upload is distinguishable
           // from a slow graph node.
           log.info({ chat: jid, bytes: run.image.bytes.length }, 'sending infographic')
-          await sendInfographic(sock, jid, message, run.image, run.brief)
+          await sendInfographic(await live(), jid, message, run.image, run.brief)
           log.info(
             {
               chat: jid,
@@ -211,7 +242,7 @@ async function runRequest(
         if (!run.answer.trim()) throw new EmptyAnswerError()
 
         log.info({ chat: jid, chars: run.answer.length }, 'sending answer')
-        await sendAnswer(sock, jid, message, requester, run.answer)
+        await sendAnswer(await live(), jid, message, requester, run.answer)
         log.info(
           {
             chat: jid,
@@ -233,8 +264,15 @@ async function runRequest(
       },
       // Ack + typing fire as soon as the user is admitted, even if still waiting for a worker.
       async () => {
-        await sendAck(sock, jid, message, expectsImage)
-        stopTyping = startTyping(sock, jid)
+        try {
+          const socket = await live()
+          await sendAck(socket, jid, message, expectsImage)
+          stopTyping = startTyping(socket, jid)
+        } catch (error: unknown) {
+          // Never rethrow: this runs before the job body, so a throw here would trade a
+          // perfectly gettable answer for the courtesy message announcing it.
+          log.warn({ chat: jid, ...errorFields(error) }, 'ack skipped, no live socket')
+        }
       },
     )
   } catch (error: unknown) {
@@ -242,7 +280,7 @@ async function runRequest(
     const remainingMs = error instanceof UserCooldownError ? error.remainingMs : undefined
     log.error({ chat: jid, kind, remainingMs, ...errorFields(error) }, 'infographic failed')
     try {
-      await sendError(sock, jid, message, requester, kind, remainingMs)
+      await sendError(await live(), jid, message, requester, kind, remainingMs)
     } catch (sendErr: unknown) {
       log.error({ chat: jid, ...errorFields(sendErr) }, 'failed to send error reply')
     }

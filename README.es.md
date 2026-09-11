@@ -584,6 +584,10 @@ src/
   vuelve a pedir vinculación.
 - **Las caídas transitorias reconectan** con backoff exponencial, limitado por
   `MAX_RECONNECT_ATTEMPTS`.
+- **Una ejecución sobrevive a una reconexión.** Baileys reemplaza el socket por completo al
+  reconectar, así que cada respuesta pide el socket activo en el momento de enviar, en lugar de
+  retener aquel en el que llegó la pregunta. Una respuesta investigada a través de una caída
+  sigue llegando al grupo.
 - **Las credenciales muertas** limpian la carpeta de autenticación y terminan — solo volver a
   vincular lo arregla.
 - **Ctrl+C vacía la cola** y luego sale de verdad. Baileys deja temporizadores atrás, así que el

@@ -561,6 +561,9 @@ src/
   immediately rather than reconnecting.
 - **Credentials are saved on every `creds.update`**, otherwise the next start asks to pair again.
 - **Transient drops reconnect** with exponential backoff, capped at `MAX_RECONNECT_ATTEMPTS`.
+- **A run survives a reconnect.** Baileys replaces the socket wholesale when it reconnects, so
+  every reply asks for the live socket at the moment it sends rather than holding the one the
+  question arrived on. An answer researched across a drop still reaches the group.
 - **Dead credentials** clear the auth folder and exit — only pairing again can fix them.
 - **Ctrl+C drains the queue** then exits for real. Baileys leaves timers behind, so shutdown
   forces the process to exit; otherwise a lingering instance fights the next run for the session.

@@ -109,6 +109,9 @@ function mentionToken(jid: string): string {
  * Logged because this was the only send in the pipeline that left no trace: with
  * `LOG_MESSAGE_CONTENT` off — the default — an outgoing ack and an outgoing answer are the
  * same log line, so "did the bot ack?" was not a question the log could answer.
+ *
+ * Retried like every other reply. It used to be the one send that got a single attempt, so a
+ * blip dropped it silently while the answer behind it — which does retry — still arrived.
  */
 export async function sendAck(
   sock: WASocket,
@@ -124,7 +127,10 @@ export async function sendAck(
   const text = expectsImage ? MESSAGES.ackImage : MESSAGES.ackText
 
   try {
-    await sock.sendMessage(jid, { text }, { quoted: message })
+    // Two attempts where the answer gets three: this one runs before the job body, so every
+    // second spent retrying is a second the research has not started. One retry still covers
+    // the case that used to lose the ack — a blip on a socket that is otherwise fine.
+    await sendWithRetry(sock, jid, { text }, { quoted: message }, 2)
     log.info({ chat: jid, expectsImage }, 'ack sent')
   } catch (error: unknown) {
     /*
@@ -196,8 +202,13 @@ export async function sendWithRetry(
       return
     } catch (error: unknown) {
       lastError = error
-      log.warn({ error, chat: jid, attempt: i + 1 }, 'sendMessage failed, retrying')
-      await new Promise((r) => setTimeout(r, 1_000 * 2 ** i))
+      const last = i === attempts - 1
+      log.warn(
+        { error, chat: jid, attempt: i + 1 },
+        last ? 'sendMessage failed, giving up' : 'sendMessage failed, retrying',
+      )
+      // Backing off after the final attempt is pure latency on the path that already failed.
+      if (!last) await new Promise((r) => setTimeout(r, 1_000 * 2 ** i))
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError))

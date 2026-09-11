@@ -576,6 +576,9 @@ src/
 - **As credenciais são salvas a cada `creds.update`**, senão a próxima inicialização pede
   pareamento de novo.
 - **Quedas transitórias reconectam** com backoff exponencial, limitado por `MAX_RECONNECT_ATTEMPTS`.
+- **Uma execução sobrevive a uma reconexão.** O Baileys troca o socket inteiro ao reconectar,
+  então cada resposta pede o socket ativo no momento em que envia, em vez de segurar aquele em
+  que a pergunta chegou. Uma resposta pesquisada atravessando uma queda ainda chega ao grupo.
 - **Credenciais mortas** limpam a pasta de autenticação e encerram — só parear de novo resolve.
 - **Ctrl+C esvazia a fila** e então encerra de verdade. O Baileys deixa timers para trás, então o
   shutdown força a saída do processo; caso contrário uma instância remanescente briga com a
