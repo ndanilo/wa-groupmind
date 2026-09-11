@@ -1,18 +1,26 @@
 import type { WASocket } from 'baileys'
 
-import { TransportUnavailableError } from '../notifications/contract.js'
+/** WhatsApp is not connected, so nothing can be sent right now. */
+export class TransportUnavailableError extends Error {
+  constructor(message = 'whatsapp transport is not connected') {
+    super(message)
+    this.name = 'TransportUnavailableError'
+  }
+}
 
 /*
 Holds the socket that is live right now.
 
 WhatsAppConnection builds a brand new WASocket on every reconnect (start() reassigns this.socket
 and calls itself again after a drop), so anything that captures a reference keeps writing into a
-dead socket from the first disconnect onwards. Background senders therefore ask the gate on each
-delivery rather than holding one.
+dead socket from the first disconnect onwards. Every sender therefore asks the gate per send
+rather than holding one -- webhook deliveries, and the bot's own replies, which are the ones
+most exposed to it: a research run can span minutes and several reconnects.
 
-waitForReady() also downgrades a reconnect from a failure to a short wait. A notification that
-lands mid-reconnect is worth holding for a few seconds instead of rejecting outright, since the
-socket usually comes back well inside that window.
+waitForReady() also downgrades a reconnect from a failure to a short wait. A reply that lands
+mid-reconnect is worth holding for a few seconds instead of rejecting outright, since the socket
+usually comes back well inside that window -- and for a reply, rejecting means throwing away an
+answer that has already been paid for.
 */
 
 type Waiter = {

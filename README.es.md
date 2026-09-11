@@ -551,7 +551,7 @@ src/
     mention.ts                  detección de @bot (PN + LID) y análisis de la pregunta
     reply.ts                    envío de confirmación / texto / imagen / error
     infographic.ts              orquesta cola + grafo + respuestas
-    socketGate.ts               publica el socket actualmente activo
+    socketGate.ts               publica el socket activo; cada envío lo consulta al enviar
     notify.ts                   entrega saliente para el webhook
   notifications/                webhook HTTP — ver su propio README
     contract.ts                 tipos compartidos; no importa nada

@@ -66,11 +66,3 @@ export class QueueUnavailableError extends Error {
     this.name = 'QueueUnavailableError'
   }
 }
-
-/** WhatsApp is not connected, so delivery cannot even be attempted right now. */
-export class TransportUnavailableError extends Error {
-  constructor(message = 'whatsapp transport is not connected') {
-    super(message)
-    this.name = 'TransportUnavailableError'
-  }
-}

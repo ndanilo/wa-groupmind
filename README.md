@@ -530,7 +530,7 @@ src/
     mention.ts                  @bot detection (PN + LID) and question parsing
     reply.ts                    ack / text / image / error senders
     infographic.ts              orchestrates queue + graph + replies
-    socketGate.ts               publishes the currently live socket
+    socketGate.ts               publishes the live socket; every sender asks it per send
     notify.ts                   outbound delivery for the webhook
   notifications/                HTTP webhook — see its own README
     contract.ts                 shared types; imports nothing

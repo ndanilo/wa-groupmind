@@ -144,12 +144,6 @@ export async function sendAck(
 }
 
 /**
- * Best-effort composing heartbeat.
- *
- * The client stays invisible (`markOnlineOnConnect: false`), so presence may be
- * ignored. Failures are logged at debug and never thrown.
- */
-/**
  * Best-effort "still working" nudge. Never throws: a failed nudge must not fail the run.
  *
  * Follows SEND_ACK rather than adding a setting of its own — someone who turned the opening ack off
@@ -169,6 +163,12 @@ export async function sendProgress(
   }
 }
 
+/**
+ * Best-effort composing heartbeat.
+ *
+ * The client stays invisible (`markOnlineOnConnect: false`), so presence may be
+ * ignored. Failures are logged at debug and never thrown.
+ */
 export function startTyping(sock: WASocket, jid: string): () => void {
   if (!config.typingIndicator) return () => {}
 

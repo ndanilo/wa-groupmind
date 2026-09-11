@@ -197,6 +197,16 @@ Baileys does not always error loudly on a closed socket, that failure can be sil
 `waitForReady()` additionally turns a reconnect from a failure into a short wait, since the
 socket is usually back well within `NOTIFY_READY_TIMEOUT_MS`.
 
+The gate is **not** webhook infrastructure, despite being documented here first. It lives in
+`src/whatsapp/`, it is built unconditionally in `src/index.ts`, and the bot's own replies use it
+on exactly the same terms. They are in fact the more exposed case: a delivery takes seconds,
+while a research run takes minutes and can outlive several reconnects.
+
+`WhatsAppConnection` owns the gate's lifecycle and is the only thing that stops it, on the last
+step of shutdown. `stop()` here deliberately leaves it alone — releasing a shared gate mid-drain
+would strand an infographic that is still waiting to be sent. Parked deliveries are bounded by
+`NOTIFY_READY_TIMEOUT_MS` anyway, so draining cannot hang on it.
+
 ### Why the recipient is resolved through `onWhatsApp()`
 
 Appending `@s.whatsapp.net` to the digits would usually work, but asking the server does two
@@ -279,7 +289,7 @@ logging delivery function and no WhatsApp at all. If it ever stops working, some
 | `worker/jobStore.ts` | Job status and idempotency, with lazy expiry |
 | `wiring.ts` | Composition root. The file that gets replaced on a split |
 | `../whatsapp/notify.ts` | The delivery function: resolve, compress, send |
-| `../whatsapp/socketGate.ts` | Holds the currently live socket |
+| `../whatsapp/socketGate.ts` | Holds the currently live socket. Shared with the bot, not owned here |
 
 ## Tests
 
