@@ -105,6 +105,10 @@ function mentionToken(jid: string): string {
  *
  * `expectsImage` comes from the free keyword pass, so the wording can match the likely
  * outcome without waiting for (or paying for) the classifier.
+ *
+ * Logged because this was the only send in the pipeline that left no trace: with
+ * `LOG_MESSAGE_CONTENT` off — the default — an outgoing ack and an outgoing answer are the
+ * same log line, so "did the bot ack?" was not a question the log could answer.
  */
 export async function sendAck(
   sock: WASocket,
@@ -112,9 +116,25 @@ export async function sendAck(
   message: WAMessage,
   expectsImage = false,
 ): Promise<void> {
-  if (!config.sendAck) return
+  if (!config.sendAck) {
+    log.debug({ chat: jid }, 'ack skipped, SEND_ACK is off')
+    return
+  }
+
   const text = expectsImage ? MESSAGES.ackImage : MESSAGES.ackText
-  await sock.sendMessage(jid, { text }, { quoted: message })
+
+  try {
+    await sock.sendMessage(jid, { text }, { quoted: message })
+    log.info({ chat: jid, expectsImage }, 'ack sent')
+  } catch (error: unknown) {
+    /*
+    Never rethrow. This runs in the admission callback, which fires before the job body, so a
+    throw here rejected the whole request before any research ran — trading the answer for a
+    courtesy message, and reporting it to the group as a failure. Same reasoning as
+    sendProgress below.
+    */
+    log.warn({ error, chat: jid }, 'ack failed, continuing without it')
+  }
 }
 
 /**
