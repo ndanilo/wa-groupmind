@@ -58,11 +58,11 @@ las URLs en las que se basó.
 ```
 
 Una ejecución real en un número de prueba: mención, confirmación y después la lista de temas
-con fuentes. Registro a la izquierda, teléfono a la derecha.
+con fuentes. Registro a la izquierda, teléfono a la derecha. El registro se lee bien en la
+[grabación en resolución original](docs/assets/ai-bot-demo.mp4).
 
 <div align="center">
-<video src="docs/assets/ai-bot-demo.mp4" poster="docs/assets/ai-bot-demo.jpg" width="100%" controls playsinline>
-</video>
+<img src="docs/assets/ai-bot-demo.gif" alt="Grabación de pantalla: registro del terminal a la izquierda y un teléfono a la derecha. Una mención en el grupo se convierte en la confirmación y después en una respuesta en temas con fuentes." width="100%">
 </div>
 
 <img src="docs/assets/demo-answer.jpg" alt="Un miembro del grupo menciona al bot, llega la confirmación y después la respuesta en temas con fuentes" width="100%">

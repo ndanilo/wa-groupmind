@@ -57,11 +57,11 @@ URLs em que ela se baseou.
 ```
 
 Uma execução real em um número de teste: menção, confirmação e depois a lista de tópicos com
-fontes. Log à esquerda, celular à direita.
+fontes. Log à esquerda, celular à direita. O log fica legível na
+[gravação em resolução original](docs/assets/ai-bot-demo.mp4).
 
 <div align="center">
-<video src="docs/assets/ai-bot-demo.mp4" poster="docs/assets/ai-bot-demo.jpg" width="100%" controls playsinline>
-</video>
+<img src="docs/assets/ai-bot-demo.gif" alt="Gravação de tela: log do terminal à esquerda e um celular à direita. Uma menção no grupo vira a confirmação e depois uma resposta em tópicos com fontes." width="100%">
 </div>
 
 <img src="docs/assets/demo-answer.jpg" alt="Um integrante do grupo marca o bot, chega a confirmação e depois a resposta em tópicos com fontes" width="100%">

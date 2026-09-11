@@ -12,8 +12,8 @@ in a clone, so it gets deleted rather than parked.
 | --- | --- | --- | --- |
 | `logo.png` | PNG, transparent | 512x512 | Header of all three READMEs, rendered at 140px |
 | `hero.jpg` | JPEG | 1600x893 | Banner under the title in all three READMEs |
-| `ai-bot-demo.mp4` | H.264 | 1762x970, 44s | "What it does" — inline `<video>` of a real run |
-| `ai-bot-demo.jpg` | JPEG | 1200x661 | `poster` frame for the recording (first-frame fallback) |
+| `ai-bot-demo.gif` | GIF, 6fps | 900x495, 44s | "What it does" — the recording, playing inline in all three READMEs |
+| `ai-bot-demo.mp4` | H.264 | 1762x970, 44s | Same recording at full resolution, linked from the line above the GIF |
 | `demo-answer.jpg` | JPEG | 1200x896 | "What it does" — the core ask-and-answer loop |
 | `demo-infographic.jpg` | JPEG | 1200x896 | "Answer format" — a poster arriving in a thread |
 | `demo-poster.jpg` | JPEG | 760x1362 | "Answer format" — a generated poster on its own |
@@ -57,15 +57,28 @@ fine. Looking like WhatsApp is not.
 
 The five `demo-*` mockups are locked to this palette. Changing it means regenerating all of them.
 
-`ai-bot-demo.mp4` is not a mockup. It is a screen recording of a test number and a private
-test group (bot + operator only). Account identifiers in the log pane are masked before the
-file is committed. The mockup rules above do not apply to it; do not restyle or recrop it to
-look like the generated stills.
+The demo recording is not a mockup. It is a real run against a test number in a private test
+group (bot + operator only), so the mockup rules above do not apply to it — do not restyle or
+recrop it to look like the generated stills. Account identifiers in the log pane are masked
+before it is committed: the phone number, both LIDs and the group JID never reach the repo.
 
-The READMEs embed it with a relative `<video src="docs/assets/ai-bot-demo.mp4">`. That plays in
-Markdown previews and local HTML. GitHub.com sanitises `<video>` whose `src` is a path in the
-repo; once this file is on `main`, drag it onto an issue or the README editor on github.com to
-get a `user-attachments` URL and put that in `src` if the inline player is empty there.
+## Why the demo ships twice
+
+GitHub.com strips a `<video>` tag whose `src` is a path inside the repository, which leaves an
+empty gap where the player should be. An `<img>` pointing at a GIF is an ordinary image to that
+sanitiser, so the GIF is what actually animates on the rendered README.
+
+The trade-off is that a GIF large enough to keep the pino log legible would be tens of
+megabytes, so `ai-bot-demo.gif` is 900px at 6fps and the log pane is only impressionistic at
+that size. The MP4 stays alongside it, linked in the sentence above the GIF, for anyone who
+wants to read the log lines.
+
+Both come from the same source recording. Regenerate the GIF after replacing the MP4:
+
+```bash
+ffmpeg -i docs/assets/ai-bot-demo.mp4 -vf "fps=6,scale=900:-1:flags=lanczos,palettegen=max_colors=80:stats_mode=diff" -update 1 -frames:v 1 palette.png
+ffmpeg -i docs/assets/ai-bot-demo.mp4 -i palette.png -lavfi "fps=6,scale=900:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" -loop 0 docs/assets/ai-bot-demo.gif
+```
 
 ## Regenerating
 

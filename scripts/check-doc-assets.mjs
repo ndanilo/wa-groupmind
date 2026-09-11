@@ -1,8 +1,8 @@
 /**
  * Documentation asset guard.
  *
- * Fails when an image the docs reference is missing, when an image on disk is
- * referenced by nothing, or when one README gains an image and the others do not.
+ * Fails when an asset the docs reference is missing, when an asset on disk is
+ * referenced by nothing, or when one README gains an asset and the others do not.
  * Offline and deterministic, so CI can depend on it.
  *
  * Run from the repo root:  node scripts/check-doc-assets.mjs
@@ -11,7 +11,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs'
 
 const READMES = ['README.md', 'README.pt-BR.md', 'README.es.md']
 const DOCS = [...READMES, 'docs/assets/README.md']
-const REF = /(?:src="|href="|poster="|]\()(docs\/assets\/[^")]+)/g
+const REF = /(?:src="|]\()(docs\/assets\/[^")]+)/g
 
 /**
  * Assets that are legitimately not linked from markdown. GitHub serves the social

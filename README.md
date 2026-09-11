@@ -56,11 +56,11 @@ URLs it relied on.
 ```
 
 A real run on a test number: mention, acknowledgement, then a sourced topic list. Log on the
-left, phone on the right.
+left, phone on the right. The log pane is legible in the
+[full-resolution recording](docs/assets/ai-bot-demo.mp4).
 
 <div align="center">
-<video src="docs/assets/ai-bot-demo.mp4" poster="docs/assets/ai-bot-demo.jpg" width="100%" controls playsinline>
-</video>
+<img src="docs/assets/ai-bot-demo.gif" alt="Screen recording: terminal log on the left, phone on the right. A group mention becomes an acknowledgement, then a sourced topic-list answer." width="100%">
 </div>
 
 <img src="docs/assets/demo-answer.jpg" alt="A group member mentions the bot, an acknowledgement arrives, then a sourced topic-list answer" width="100%">
